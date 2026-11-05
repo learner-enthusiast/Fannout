@@ -1,9 +1,7 @@
 import express from "express";
 import { logger } from "@repo/logger";
 import cors from "cors";
-import cookieParser from "cookie-parser";
-import { toNodeHandler } from "better-auth/node";
-import { auth } from "@repo/auth";
+import { clerkMiddleware } from "@clerk/express";
 
 import * as trpcExpress from "@trpc/server/adapters/express";
 import { generateOpenApiDocument, createOpenApiExpressMiddleware } from "trpc-to-openapi";
@@ -13,21 +11,28 @@ import { serverRouter, createContext } from "@repo/trpc/server";
 import helmet from "helmet";
 import { env } from "./env";
 import { errorHandler } from "./middleware/error-handler";
+import { clerkWebhookHandler } from "./webhooks/clerk";
+import { createDefaultOAuthRouter } from "./routes/oauth";
+import { inngestHandler } from "@repo/inngest";
+import { loggableUrl } from "./utils/safe-url";
 
 export const app = express();
 const openApiDocument = generateOpenApiDocument(serverRouter, {
-  title: "Streamyst OpenAPI",
+  title: "Fannout OpenAPI",
   version: "1.0.0",
   baseUrl: env.BASE_URL.concat("/api"),
 });
 
+app.use(clerkMiddleware());
 app.use(
   cors({
-    origin: env.CORS_ORIGIN,
+    origin: env.WEB_URL,
     credentials: true,
   }),
 );
-app.all("/api/auth/*splat", toNodeHandler(auth));
+app.post("/webhooks/clerk", express.raw({ type: "application/json" }), clerkWebhookHandler);
+// Inngest sends large step payloads; give it its own parser ahead of the global 100kb one.
+app.use("/api/inngest", express.json({ limit: "10mb" }), inngestHandler);
 app.use(
   helmet({
     contentSecurityPolicy: false,
@@ -49,12 +54,11 @@ app.use(
   }),
 );
 app.use(express.json());
-app.use(cookieParser());
 app.use((req, res, next) => {
   const start = Date.now();
 
   res.on("finish", () => {
-    logger.info(`${req.method} ${req.originalUrl} -> ${res.statusCode}`, {
+    logger.info(`${req.method} ${loggableUrl(req)} -> ${res.statusCode}`, {
       durationMs: Date.now() - start,
     });
   });
@@ -62,11 +66,11 @@ app.use((req, res, next) => {
   next();
 });
 app.get("/", (req, res) => {
-  return res.json({ message: "Streamyst is up and running..." });
+  return res.json({ message: "Fannout API is up and running..." });
 });
 
 app.get("/health", (req, res) => {
-  return res.json({ message: "Streamyst server is healthy", healthy: true });
+  return res.json({ message: "Fannout API is healthy", healthy: true });
 });
 
 logger.debug(`openapi.json: ${env.BASE_URL}/openapi.json`);
@@ -76,6 +80,12 @@ app.get("/openapi.json", (req, res) => {
 
 logger.debug(`docs: ${env.BASE_URL}/docs`);
 app.use("/docs", apiReference({ url: "/openapi.json" }));
+
+// Plain Express routes (browser redirects); must be mounted before the OpenAPI catch-all.
+app.use(
+  "/api/oauth",
+  createDefaultOAuthRouter({ webUrl: env.WEB_URL, secureCookies: env.NODE_ENV === "prod" }),
+);
 
 app.use(
   "/api",

@@ -6,10 +6,11 @@ import { useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
 
 import { Toaster } from '~/components/ui/sonner'
+import { TooltipProvider } from '~/components/ui/tooltip'
 import { normalizeTRPCError } from '~/lib/error'
 import { trpc } from '~/trpc/client'
 import { createTRPCHttpBatchClientClient } from '~/trpc/create-client'
-import { AuthProvider } from './auth'
+import { useAuth } from '@clerk/nextjs'
 
 function makeQueryClient() {
     return new QueryClient({
@@ -36,9 +37,10 @@ function makeQueryClient() {
 
 export function GlobalProviders({ children }: { children: ReactNode }) {
     const [queryClient] = useState(makeQueryClient)
+    const { getToken } = useAuth()
     const [trpcClient] = useState(() =>
         trpc.createClient({
-            links: [createTRPCHttpBatchClientClient()],
+            links: [createTRPCHttpBatchClientClient({ getToken })],
         })
     )
 
@@ -46,15 +48,15 @@ export function GlobalProviders({ children }: { children: ReactNode }) {
         <QueryClientProvider client={queryClient}>
             <NextThemesProvider
                 attribute="class"
-                defaultTheme="light"
-                enableSystem
+                themes={['dark', 'light']}
+                defaultTheme="dark"
+                enableSystem={false}
+                storageKey="fannout-theme"
                 disableTransitionOnChange
             >
                 <trpc.Provider client={trpcClient} queryClient={queryClient}>
-                    <AuthProvider>
-                        {children}
-                        <Toaster />
-                    </AuthProvider>
+                    <TooltipProvider delay={300}>{children}</TooltipProvider>
+                    <Toaster />
                 </trpc.Provider>
             </NextThemesProvider>
         </QueryClientProvider>

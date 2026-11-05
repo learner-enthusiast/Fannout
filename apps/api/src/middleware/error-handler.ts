@@ -2,6 +2,7 @@ import { AppError, ErrorCode } from "@repo/errors";
 import { logger } from "@repo/logger";
 import type { ErrorRequestHandler } from "express";
 import { env } from "../env";
+import { loggableUrl } from "../utils/safe-url";
 
 export const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
   const appError =
@@ -14,7 +15,7 @@ export const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
         });
 
   logger.error("HTTP error", {
-    path: req.originalUrl,
+    path: loggableUrl(req),
     method: req.method,
     code: appError.code,
     error: appError,

@@ -1,51 +1,73 @@
-import type { Metadata } from 'next'
+import type { Metadata, Viewport } from 'next'
 import localFont from 'next/font/local'
+import { ClerkProvider } from '@clerk/nextjs'
+import { shadcn } from '@clerk/ui/themes'
+
 import './globals.css'
-import { GlobalProviders } from '~/providers/global'
-import { Montserrat, Playfair_Display } from 'next/font/google'
 import { cn } from '~/lib/utils'
-import { TooltipProvider } from '~/components/ui/tooltip'
-
-const playfairDisplayHeading = Playfair_Display({
-    subsets: ['latin'],
-    variable: '--font-heading',
-})
-
-const montserrat = Montserrat({ subsets: ['latin'], variable: '--font-sans' })
+import { brand } from '~/lib/brand'
+import { GlobalProviders } from '~/providers/global'
 
 const geistSans = localFont({
     src: './fonts/GeistVF.woff',
     variable: '--font-geist-sans',
+    display: 'swap',
 })
 const geistMono = localFont({
     src: './fonts/GeistMonoVF.woff',
     variable: '--font-geist-mono',
+    display: 'swap',
 })
 
 export const metadata: Metadata = {
-    title: 'Streamyst',
-    description: 'Media Forwarding',
+    title: { default: 'Fannout', template: '%s · Fannout' },
+    description: 'Fannout — write once, publish to every channel.',
+    applicationName: 'Fannout',
+}
+
+export const viewport: Viewport = {
+    // Themes are class-based (not OS-based), so advertise the default (dark).
+    themeColor: brand.dark.background,
+    colorScheme: 'dark light',
+}
+
+/** Clerk modal/user menu themed from our CSS variables (dark + beige). */
+const clerkAppearance = {
+    theme: shadcn,
+    variables: {
+        colorBackground: 'var(--popover)',
+        colorForeground: 'var(--popover-foreground)',
+        colorInput: 'var(--background)',
+        colorInputForeground: 'var(--foreground)',
+        colorSuccess: 'var(--success)',
+        colorWarning: 'var(--warning)',
+        colorDanger: 'var(--destructive)',
+        colorRing: 'var(--ring)',
+        borderRadius: 'var(--radius-control)',
+        fontFamily: 'var(--font-sans)',
+        fontSize: '14px',
+    },
+    elements: {
+        cardBox: 'shadow-float border border-border rounded-surface',
+        popoverBox: 'shadow-float border border-border rounded-surface',
+        formButtonPrimary:
+            'bg-primary text-primary-foreground hover:bg-primary-hover',
+    },
 }
 
 export default function RootLayout({
     children,
-}: Readonly<{
-    children: React.ReactNode
-}>) {
+}: Readonly<{ children: React.ReactNode }>) {
     return (
         <html
             lang="en"
-            className={cn(
-                'dark',
-                'font-sans',
-                montserrat.variable,
-                playfairDisplayHeading.variable
-            )}
+            suppressHydrationWarning
+            className={cn(geistSans.variable, geistMono.variable)}
         >
-            <body className={`${geistSans.variable} ${geistMono.variable}`}>
-                <GlobalProviders>
-                    <TooltipProvider>{children}</TooltipProvider>
-                </GlobalProviders>
+            <body>
+                <ClerkProvider appearance={clerkAppearance}>
+                    <GlobalProviders>{children}</GlobalProviders>
+                </ClerkProvider>
             </body>
         </html>
     )

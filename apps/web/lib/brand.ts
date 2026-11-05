@@ -1,0 +1,162 @@
+/**
+ * Fannout brand tokens — TypeScript mirror of `app/globals.css`.
+ *
+ * Use ONLY where CSS variables can't be read: OG images, emails, chart
+ * libraries that need literal colours, native/mobile. Everywhere else use the
+ * Tailwind utilities (`bg-primary`, `text-muted-foreground`, …).
+ *
+ * `lib/brand.test.ts` parses globals.css and fails if these drift.
+ */
+
+export const colorTokenNames = [
+    'background',
+    'foreground',
+    'card',
+    'card-foreground',
+    'popover',
+    'popover-foreground',
+    'muted',
+    'muted-foreground',
+    'border',
+    'input',
+    'primary',
+    'primary-foreground',
+    'primary-hover',
+    'secondary',
+    'secondary-foreground',
+    'accent',
+    'accent-foreground',
+    'ring',
+    'link',
+    'success',
+    'success-foreground',
+    'warning',
+    'warning-foreground',
+    'destructive',
+    'destructive-foreground',
+    'sidebar',
+    'sidebar-foreground',
+    'sidebar-primary',
+    'sidebar-primary-foreground',
+    'sidebar-accent',
+    'sidebar-accent-foreground',
+    'sidebar-border',
+    'sidebar-ring',
+    'chart-1',
+    'chart-2',
+    'chart-3',
+    'chart-4',
+    'chart-5',
+] as const
+
+export type ColorTokenName = (typeof colorTokenNames)[number]
+export type ThemeName = 'dark' | 'light'
+export type ThemeColors = Record<ColorTokenName, string>
+
+const dark: ThemeColors = {
+    background: '#0B0B12',
+    foreground: '#ECECF4',
+    card: '#151520',
+    'card-foreground': '#ECECF4',
+    popover: '#1C1C2A',
+    'popover-foreground': '#ECECF4',
+    muted: '#151520',
+    'muted-foreground': '#9A9AB0',
+    border: '#2A2A3C',
+    input: '#2A2A3C',
+    primary: '#4F46E5',
+    'primary-foreground': '#FFFFFF',
+    'primary-hover': '#6264F0',
+    secondary: '#1C1C2A',
+    'secondary-foreground': '#ECECF4',
+    accent: '#22D3EE',
+    'accent-foreground': '#0B0B12',
+    ring: '#A5B4FC',
+    link: '#A5B4FC',
+    success: '#4ADE80',
+    'success-foreground': '#0B0B12',
+    warning: '#FBBF24',
+    'warning-foreground': '#0B0B12',
+    destructive: '#F87171',
+    'destructive-foreground': '#0B0B12',
+    sidebar: '#151520',
+    'sidebar-foreground': '#ECECF4',
+    'sidebar-primary': '#6264F0',
+    'sidebar-primary-foreground': '#FFFFFF',
+    'sidebar-accent': '#1C1C2A',
+    'sidebar-accent-foreground': '#ECECF4',
+    'sidebar-border': '#2A2A3C',
+    'sidebar-ring': '#A5B4FC',
+    'chart-1': '#4F46E5',
+    'chart-2': '#22D3EE',
+    'chart-3': '#4ADE80',
+    'chart-4': '#FBBF24',
+    'chart-5': '#F87171',
+}
+
+const light: ThemeColors = {
+    background: '#F5F0E6',
+    foreground: '#1C1A16',
+    card: '#FBF8F1',
+    'card-foreground': '#1C1A16',
+    popover: '#FFFFFF',
+    'popover-foreground': '#1C1A16',
+    muted: '#EFE8DA',
+    'muted-foreground': '#6B6457',
+    border: '#E4DCCB',
+    input: '#E4DCCB',
+    primary: '#4338CA',
+    'primary-foreground': '#FFFFFF',
+    'primary-hover': '#3730A3',
+    secondary: '#FBF8F1',
+    'secondary-foreground': '#1C1A16',
+    accent: '#0E7490',
+    'accent-foreground': '#FFFFFF',
+    ring: '#4338CA',
+    link: '#4338CA',
+    success: '#166534',
+    'success-foreground': '#FFFFFF',
+    warning: '#92400E',
+    'warning-foreground': '#FFFFFF',
+    destructive: '#B91C1C',
+    'destructive-foreground': '#FFFFFF',
+    sidebar: '#FBF8F1',
+    'sidebar-foreground': '#1C1A16',
+    'sidebar-primary': '#4338CA',
+    'sidebar-primary-foreground': '#FFFFFF',
+    'sidebar-accent': '#EFE8DA',
+    'sidebar-accent-foreground': '#1C1A16',
+    'sidebar-border': '#E4DCCB',
+    'sidebar-ring': '#4338CA',
+    'chart-1': '#4338CA',
+    'chart-2': '#0E7490',
+    'chart-3': '#166534',
+    'chart-4': '#92400E',
+    'chart-5': '#B91C1C',
+}
+
+function withArrays(colors: ThemeColors) {
+    return {
+        ...colors,
+        /** Every colour token, in `colorTokenNames` order. */
+        colors: colorTokenNames.map((name) => colors[name]),
+        /** Chart series order: primary, accent, success, warning, destructive. */
+        chart: [
+            colors['chart-1'],
+            colors['chart-2'],
+            colors['chart-3'],
+            colors['chart-4'],
+            colors['chart-5'],
+        ],
+    } as const
+}
+
+export const brand = {
+    name: 'Fannout',
+    defaultTheme: 'dark' as ThemeName,
+    dark: withArrays(dark),
+    light: withArrays(light),
+    radius: { control: 8, surface: 12 },
+    duration: { fast: 150, base: 200 },
+    ease: 'cubic-bezier(0.2, 0.8, 0.2, 1)',
+} as const

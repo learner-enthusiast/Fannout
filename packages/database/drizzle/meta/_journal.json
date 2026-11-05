@@ -5,8 +5,22 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1782274207017,
-      "tag": "0000_greedy_penance",
+      "when": 1793703885711,
+      "tag": "0000_users",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1793863057800,
+      "tag": "0001_users_uuid_clerk_id",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1793864691726,
+      "tag": "0002_social_connections_oauth",
       "breakpoints": true
     }
   ]

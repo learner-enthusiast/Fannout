@@ -2,6 +2,7 @@ import { initTRPC, TRPCError } from "@trpc/server";
 import { OpenApiMeta } from "trpc-to-openapi";
 import { AppError, toTRPCError } from "@repo/errors";
 import { logger } from "@repo/logger";
+import { ensureUser } from "@repo/services/users";
 import { createContext } from "./context";
 
 export const tRPCContext = initTRPC
@@ -34,8 +35,8 @@ const baseProcedure = tRPCContext.procedure.use(async ({ path, type, next }) => 
 export const router = tRPCContext.router;
 export const publicProcedure = baseProcedure;
 
-export const authenticatedProcedure = baseProcedure.use(({ ctx, next }) => {
-  if (!ctx.user) {
+export const protectedProcedure = baseProcedure.use(async ({ ctx, next }) => {
+  if (!ctx.userId) {
     throw new TRPCError({
       code: "UNAUTHORIZED",
       message: "Not authenticated",
@@ -43,7 +44,7 @@ export const authenticatedProcedure = baseProcedure.use(({ ctx, next }) => {
     });
   }
 
-  return next({
-    ctx: { ...ctx, user: ctx.user.id, session: ctx.session! },
-  });
+  // ctx.userId is the Clerk id; ctx.dbUserId is users.id (uuid) for service calls.
+  const dbUserId = await ensureUser(ctx.userId);
+  return next({ ctx: { ...ctx, userId: ctx.userId, dbUserId } });
 });

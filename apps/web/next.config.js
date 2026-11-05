@@ -1,4 +1,7 @@
 /** @type {import('next').NextConfig} */
-const nextConfig = {};
+const nextConfig = {
+    // Keep the dev badge from covering the sidebar footer / screenshots.
+    devIndicators: false,
+}
 
-export default nextConfig;
+export default nextConfig

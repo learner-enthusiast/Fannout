@@ -1,76 +1,77 @@
-import * as React from "react"
-import { cva, type VariantProps } from "class-variance-authority"
+import * as React from 'react'
+import { cva, type VariantProps } from 'class-variance-authority'
 
-import { cn } from "~/lib/utils"
+import { cn } from '~/lib/utils'
 
+/**
+ * Alert — a BLOCKING problem or important notice, placed inline at the top of
+ * the section it affects. Always include a leading lucide icon. For action
+ * results use a toast instead.
+ */
 const alertVariants = cva(
-  "group/alert relative grid w-full gap-0.5 rounded-2xl border px-4 py-3 text-start text-sm has-data-[slot=alert-action]:relative has-data-[slot=alert-action]:pe-18 has-[>svg]:grid-cols-[auto_1fr] has-[>svg]:gap-x-2.5 *:[svg]:row-span-2 *:[svg]:translate-y-0.5 *:[svg]:text-current *:[svg:not([class*='size-'])]:size-4",
-  {
-    variants: {
-      variant: {
-        default: "bg-card text-card-foreground",
-        destructive:
-          "bg-card text-destructive *:data-[slot=alert-description]:text-destructive/90 *:[svg]:text-current",
-      },
-    },
-    defaultVariants: {
-      variant: "default",
-    },
-  }
+    'relative grid w-full gap-1 rounded-surface border px-4 py-3 text-start text-sm has-[>svg]:grid-cols-[auto_1fr] has-[>svg]:gap-x-3 *:[svg]:row-span-2 *:[svg]:size-4 *:[svg]:translate-y-0.5 *:[svg]:text-current has-[>svg]:[&>[data-slot]]:col-start-2',
+    {
+        variants: {
+            variant: {
+                info: 'border-border bg-card text-foreground',
+                success: 'border-success/40 bg-card text-success',
+                warning: 'border-warning/40 bg-card text-warning',
+                destructive: 'border-destructive/40 bg-card text-destructive',
+            },
+        },
+        defaultVariants: { variant: 'info' },
+    }
 )
 
 function Alert({
-  className,
-  variant,
-  ...props
-}: React.ComponentProps<"div"> & VariantProps<typeof alertVariants>) {
-  return (
-    <div
-      data-slot="alert"
-      role="alert"
-      className={cn(alertVariants({ variant }), className)}
-      {...props}
-    />
-  )
+    className,
+    variant,
+    ...props
+}: React.ComponentProps<'div'> & VariantProps<typeof alertVariants>) {
+    return (
+        <div
+            data-slot="alert"
+            role={variant === 'destructive' ? 'alert' : 'status'}
+            className={cn(alertVariants({ variant }), className)}
+            {...props}
+        />
+    )
 }
 
-function AlertTitle({ className, ...props }: React.ComponentProps<"div">) {
-  return (
-    <div
-      data-slot="alert-title"
-      className={cn(
-        "font-medium group-has-[>svg]/alert:col-start-2 [&_a]:underline [&_a]:underline-offset-3 [&_a]:hover:text-foreground",
-        className
-      )}
-      {...props}
-    />
-  )
+function AlertTitle({ className, ...props }: React.ComponentProps<'div'>) {
+    return (
+        <div
+            data-slot="alert-title"
+            className={cn('text-label', className)}
+            {...props}
+        />
+    )
 }
 
 function AlertDescription({
-  className,
-  ...props
-}: React.ComponentProps<"div">) {
-  return (
-    <div
-      data-slot="alert-description"
-      className={cn(
-        "text-sm text-balance text-muted-foreground md:text-pretty [&_a]:underline [&_a]:underline-offset-3 [&_a]:hover:text-foreground [&_p:not(:last-child)]:mb-4",
-        className
-      )}
-      {...props}
-    />
-  )
+    className,
+    ...props
+}: React.ComponentProps<'div'>) {
+    return (
+        <div
+            data-slot="alert-description"
+            className={cn(
+                'text-meta text-muted-foreground [&_a]:text-link [&_a]:underline [&_a]:underline-offset-4',
+                className
+            )}
+            {...props}
+        />
+    )
 }
 
-function AlertAction({ className, ...props }: React.ComponentProps<"div">) {
-  return (
-    <div
-      data-slot="alert-action"
-      className={cn("absolute top-2.5 end-3", className)}
-      {...props}
-    />
-  )
+function AlertAction({ className, ...props }: React.ComponentProps<'div'>) {
+    return (
+        <div
+            data-slot="alert-action"
+            className={cn('mt-2 flex gap-2', className)}
+            {...props}
+        />
+    )
 }
 
 export { Alert, AlertTitle, AlertDescription, AlertAction }

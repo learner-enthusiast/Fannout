@@ -4,7 +4,9 @@
   "scripts": {
     "db:migrate": "dotenv -e ../../.env -- drizzle-kit migrate",
     "db:generate": "dotenv -e ../../.env -- drizzle-kit generate",
-    "dev": "dotenv -e ../../.env -- drizzle-kit studio"
+    "dev": "dotenv -e ../../.env -- drizzle-kit studio",
+    "db:drop": "dotenv -e ../../.env -- tsx scripts/reset.ts",
+    "db:reset": "pnpm db:drop && pnpm db:migrate"
   },
   "devDependencies": {
     "@repo/eslint-config": "workspace:*",

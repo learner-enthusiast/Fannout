@@ -2,24 +2,25 @@
   "name": "@repo/services",
   "version": "1.0.0",
   "private": true,
+  "scripts": {
+    "lint": "eslint env.ts users social-connections media posts post-media scheduled-posts oauth oauth-transactions test",
+    "test": "dotenv -e ../../.env -- tsx --test test/*.test.ts"
+  },
   "devDependencies": {
     "@repo/eslint-config": "workspace:*",
     "@repo/typescript-config": "workspace:*",
-    "@types/bcryptjs": "^2.4.6",
     "@types/express": "^5.0.6",
-    "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^22.15.3",
     "dotenv-cli": "^11.0.0",
+    "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   },
   "dependencies": {
+    "@clerk/express": "2.1.86",
     "@repo/database": "workspace:*",
     "@repo/errors": "workspace:^",
     "@repo/logger": "workspace:*",
-    "bcryptjs": "^2.4.3",
-    "google-auth-library": "^10.5.0",
-    "jose": "^5.9.6",
-    "jsonwebtoken": "^9.0.3",
+    "oauth4webapi": "^3",
     "zod": "^4.3.5"
   }
 }

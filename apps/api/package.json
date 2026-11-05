@@ -6,13 +6,13 @@
     "start": "dotenv -e ../../.env -- node dist/index.js",
     "dev": "dotenv -e ../../.env -- tsx watch ./src/index.ts",
     "build": "tsup",
-    "lint": "eslint src/*"
+    "lint": "eslint src test",
+    "test": "dotenv -e ../../.env -- tsx --test test/*.test.ts"
   },
   "devDependencies": {
     "@repo/eslint-config": "workspace:*",
     "@repo/typescript-config": "workspace:*",
     "@swc/core": "^1.15.8",
-    "@types/cookie-parser": "^1.4.7",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/node": "^22.15.3",
@@ -22,14 +22,14 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "@repo/auth": "workspace:*",
+    "@clerk/express": "2.1.86",
     "@repo/errors": "workspace:^",
+    "@repo/inngest": "workspace:^",
     "@repo/logger": "workspace:*",
+    "@repo/services": "workspace:^",
     "@repo/trpc": "workspace:*",
     "@scalar/express-api-reference": "^0.8.30",
     "@trpc/server": "^11.8.1",
-    "better-auth": "^1.6.20",
-    "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "express": "^5.2.1",
     "helmet": "^8.2.0",
