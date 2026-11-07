@@ -6,7 +6,10 @@ export const env = createEnv({
      * Specify your server-side environment variables schema here. This way you can ensure the app
      * isn't built with invalid env vars.
      */
-    server: {},
+    server: {
+        /** Express API origin, used for server-side calls and the Next.js rewrites. */
+        BASE_URL: z.string().url().optional(),
+    },
 
     /**
      * Specify your client-side environment variables schema here. This way you can ensure the app
@@ -23,6 +26,7 @@ export const env = createEnv({
      * middlewares) or client-side so we need to destruct manually.
      */
     runtimeEnv: {
+        BASE_URL: process.env.BASE_URL,
         NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL,
         NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:
             process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY,

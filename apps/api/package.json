@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "start": "dotenv -e ../../.env -- node dist/index.js",
-    "dev": "dotenv -e ../../.env -- tsx watch ./src/index.ts",
+    "dev": "tsx watch --env-file=../../.env --include ../../.env ./src/index.ts",
     "build": "tsup",
     "lint": "eslint src test",
     "test": "dotenv -e ../../.env -- tsx --test test/*.test.ts"

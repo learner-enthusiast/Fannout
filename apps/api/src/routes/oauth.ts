@@ -1,5 +1,6 @@
 import { getAuth } from "@clerk/express";
 import { AppError } from "@repo/errors";
+import { logger } from "@repo/logger";
 import {
   handleOAuthCallback,
   OAUTH_TRANSACTION_TTL_MS,
@@ -174,6 +175,18 @@ export function createOAuthRouter(deps: OAuthRouterDependencies) {
         returnTo: DEFAULT_RETURN_TO,
         reason: "server_error",
       };
+    }
+
+    if (result.status === "failed") {
+      logger.warn("OAuth callback failed", {
+        provider: slug.data,
+        reason: result.reason,
+        host: req.get("host"),
+        hasBindingCookie: bindingToken !== undefined,
+        cookieNames: Object.keys(req.cookies ?? {}).length
+          ? undefined
+          : (req.headers.cookie ?? "").split(";").map((c) => c.split("=")[0]?.trim()),
+      });
     }
 
     return res.redirect(

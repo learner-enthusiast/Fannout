@@ -5,7 +5,7 @@ import pkg from '~/package.json'
 const links = [
     { label: 'Docs', href: '#docs' },
     { label: 'Status', href: '#status' },
-    { label: 'Privacy', href: '#privacy' },
+    { label: 'Privacy', href: '/privacy' },
     { label: 'Terms', href: '#terms' },
 ]
 

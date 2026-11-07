@@ -5,3 +5,7 @@ export * from "./models/post";
 export * from "./models/post-media";
 export * from "./models/scheduled-post";
 export * from "./models/oauth-transaction";
+export * from "./models/media-thumbnail";
+export * from "./models/notification";
+export * from "./models/media-thumbnail";
+export * from "./models/notification";

@@ -1,0 +1,24 @@
+{
+  "name": "@repo/providers",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "lint": "eslint .",
+    "check-types": "tsc --noEmit",
+    "generate:google": "node scripts/generate-google.mjs",
+    "test": "tsx --test test/*.test.ts"
+  },
+  "devDependencies": {
+    "@repo/eslint-config": "workspace:*",
+    "@repo/typescript-config": "workspace:*",
+    "@types/node": "^22.15.3",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "@googleapis/youtube": "^40.0.2",
+    "@googleapis/youtubeanalytics": "^11.0.1",
+    "@xdevplatform/xdk": "^0.6.6",
+    "zod": "^4.3.5"
+  }
+}

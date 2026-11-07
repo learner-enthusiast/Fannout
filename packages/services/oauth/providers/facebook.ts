@@ -1,4 +1,5 @@
 import { createHmac } from "node:crypto";
+import { logger } from "@repo/logger";
 import * as oauth from "oauth4webapi";
 import { z } from "zod";
 import { expiryFrom, providerGetJson, requireCredentials, splitScopes } from "./shared";
@@ -123,6 +124,24 @@ export function createFacebookProvider(credentials: ProviderCredentials): OAuthP
         http,
         PagesSchema,
       );
+
+      // Diagnostics for `no_account`: what Facebook actually returned (never the tokens).
+      const permissions = await providerGetJson(
+        graph("/me/permissions", accessToken),
+        http,
+        PermissionsSchema,
+      ).catch(() => null);
+      logger.info("Facebook /me/accounts result", {
+        facebookUserId: me.id,
+        pageCount: pages.data.length,
+        pages: pages.data.map((page) => ({
+          id: page.id,
+          name: page.name ?? null,
+          tasks: page.tasks ?? [],
+          hasPageToken: Boolean(page.access_token),
+        })),
+        permissions: permissions?.data.map((p) => `${p.permission}:${p.status}`) ?? "unavailable",
+      });
 
       return pages.data
         .filter((page) => page.access_token)
