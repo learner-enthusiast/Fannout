@@ -11,6 +11,14 @@ const envSchema = z.object({
   /** Required: Clerk session verification. */
   CLERK_SECRET_KEY: z.string().min(1, "is required"),
 
+  /** HMAC pepper for API keys (openssl rand -base64 32). Only hashes are stored. */
+  API_KEY_PEPPER: z.string().min(32, "must be at least 32 characters (openssl rand -base64 32)"),
+  /** Set to "false" to disable rate limiting (local debugging only). */
+  RATE_LIMIT_ENABLED: z
+    .enum(["true", "false"])
+    .default("true")
+    .transform((v) => v === "true"),
+
   /** Web app origin; OAuth callbacks only ever redirect here. */
   WEB_URL: z.url().default("http://localhost:3000"),
   /** 32 random bytes, base64 encoded (`openssl rand -base64 32`). */
@@ -24,7 +32,16 @@ const envSchema = z.object({
   LINKEDIN_CLIENT_ID: optional,
   LINKEDIN_CLIENT_SECRET: optional,
   LINKEDIN_REDIRECT_URI: z.url().default("http://localhost:8000/api/oauth/linkedin/callback"),
-  LINKEDIN_SCOPES: z.string().default("openid profile email"),
+  /** w_member_social = Share on LinkedIn (post as the member). */
+  LINKEDIN_SCOPES: z.string().default("openid profile email w_member_social"),
+  /**
+   * false (default): member posts use Share on LinkedIn (/v2/ugcPosts, w_member_social).
+   * true: Community Management API (/rest/posts, /rest/videos) — needs that product.
+   */
+  LINKEDIN_USE_COMMUNITY_API: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((v) => v === "true"),
 
   X_CLIENT_ID: optional,
   X_CLIENT_SECRET: optional,
@@ -43,7 +60,7 @@ const envSchema = z.object({
   FACEBOOK_REDIRECT_URI: z.url().default("http://localhost:8000/api/oauth/facebook/callback"),
   FACEBOOK_SCOPES: z
     .string()
-    .default("public_profile,pages_show_list,pages_read_engagement,business_management"),
+    .default("public_profile,pages_show_list,pages_read_engagement,pages_manage_posts,business_management"),
   FACEBOOK_GRAPH_VERSION: z
     .string()
     .regex(/^v\d+\.\d+$/)
@@ -53,7 +70,14 @@ const envSchema = z.object({
   THREADS_CLIENT_SECRET: optional,
   /** Threads only accepts HTTPS redirect URIs (use a tunnel such as ngrok locally). */
   THREADS_REDIRECT_URI: z.url().default("http://localhost:8000/api/oauth/threads/callback"),
-  THREADS_SCOPES: z.string().default("threads_basic"),
+  /** threads_delete lets Fannout delete posts it published. */
+  THREADS_SCOPES: z.string().default("threads_basic,threads_content_publish,threads_delete"),
+
+  /** Scheduled posts: assumed upload speed to push platforms (Mbit/s) for the lead time. */
+  SCHEDULE_UPLOAD_MBPS: z.coerce.number().positive().default(20),
+  /** Lead time bounds (seconds): uploads start this long before scheduled_at. */
+  SCHEDULE_LEAD_MIN_SECONDS: z.coerce.number().int().positive().default(30),
+  SCHEDULE_LEAD_MAX_SECONDS: z.coerce.number().int().positive().default(30 * 60),
 });
 
 /** Optional OAuth providers: all-or-nothing credentials, otherwise the provider is disabled. */
@@ -67,7 +91,7 @@ const OPTIONAL_PROVIDERS = [
 
 function collectWarnings(env: z.infer<typeof envSchema>): string[] {
   const warnings: string[] = [];
-  const values = env as Record<string, string | undefined>;
+  const values = env as unknown as Record<string, string | undefined>;
   for (const provider of OPTIONAL_PROVIDERS) {
     const id = values[provider.id];
     const secret = values[provider.secret];

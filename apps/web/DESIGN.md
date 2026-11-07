@@ -150,6 +150,10 @@ add a variant in the shared component and document it in DESIGN.md first.
   "inverted" style, which forced `.dark` on them. That was removed, so they follow the
   active theme.
 
+## Lists, mutations and destructive actions
+Behavioural rules (infinite lists, optimistic updates, confirm dialogs, kebab menus) live in
+[docs/conventions/frontend.md](../../docs/conventions/frontend.md).
+
 ## Exceptions to the lint rules
 None are expected. If one is truly needed, add the file's repo-relative path and a
 reason to `ALLOWLIST` in `scripts/lint-design.mjs`. The PR must explain why a shared

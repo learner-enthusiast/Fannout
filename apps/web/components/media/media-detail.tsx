@@ -4,14 +4,12 @@ import { format } from 'date-fns'
 import { FolderIcon, FolderPlusIcon, Trash2Icon } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { useRef, useState } from 'react'
-import { toast } from 'sonner'
 
 import { PageHeader } from '~/components/layout/page-header'
 import { Alert, AlertAction, AlertDescription, AlertTitle } from '~/components/ui/alert'
 import { Button } from '~/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '~/components/ui/card'
-import { ConfirmDialog } from '~/components/ui/confirm-dialog'
+import { useDeleteMedia } from '~/components/library/delete-actions'
 import { Skeleton } from '~/components/ui/skeleton'
 import { StatusBadge } from '~/components/ui/status-badge'
 import { normalizeTRPCError } from '~/lib/error'
@@ -36,10 +34,6 @@ export function BackButton({ href = '/media', label = 'Back to Media' }: { href?
 
 export function MediaDetailView({ mediaId }: { mediaId: string }) {
     const router = useRouter()
-    const utils = trpc.useUtils()
-    const [confirm, setConfirm] = useState<null | { inUse: string[] }>(null)
-    // ConfirmDialog closes itself after onConfirm; this re-opens it with the in-use warning.
-    const followUp = useRef<string[] | null>(null)
     const query = trpc.media.get.useQuery(
         { mediaId },
         {
@@ -48,20 +42,7 @@ export function MediaDetailView({ mediaId }: { mediaId: string }) {
             refetchInterval: (q) => (q.state.data && !DONE.has(q.state.data.status) ? 3000 : false),
         }
     )
-    const remove = trpc.media.delete.useMutation()
-
-    const runDelete = async (force: boolean) => {
-        const result = await remove.mutateAsync({ mediaId, force })
-        if (!result.deleted) {
-            followUp.current = result.inUse
-            return
-        }
-        setConfirm(null)
-        void utils.media.list.invalidate()
-        void utils.folders.list.invalidate()
-        toast.success('Media deleted')
-        router.push('/media')
-    }
+    const deleteMedia = useDeleteMedia({ onDeleted: () => router.push('/media') })
 
     if (query.isPending) {
         return (
@@ -120,7 +101,7 @@ export function MediaDetailView({ mediaId }: { mediaId: string }) {
                         <Button
                             variant="destructive"
                             leftIcon={<Trash2Icon aria-hidden />}
-                            onClick={() => setConfirm({ inUse: [] })}
+                            onClick={() => deleteMedia.request({ id: media.id, name: media.name })}
                         >
                             Delete
                         </Button>
@@ -204,22 +185,7 @@ export function MediaDetailView({ mediaId }: { mediaId: string }) {
                     </Card>
                 </div>
             </div>
-            <ConfirmDialog
-                open={confirm !== null}
-                onOpenChange={(open) => {
-                    if (open) return
-                    setConfirm(followUp.current ? { inUse: followUp.current } : null)
-                    followUp.current = null
-                }}
-                title={confirm?.inUse.length ? 'This media is used in folders' : `Delete ${media.name}?`}
-                description={
-                    confirm?.inUse.length
-                        ? `It's in ${confirm.inUse.join(', ')}. Deleting removes it from ${confirm.inUse.length === 1 ? 'that folder' : 'those folders'} too.`
-                        : 'The file is removed from storage. This cannot be undone.'
-                }
-                confirmLabel={confirm?.inUse.length ? 'Delete Anyway' : 'Delete Media'}
-                onConfirm={() => runDelete(Boolean(confirm?.inUse.length))}
-            />
+            {deleteMedia.dialog}
         </>
     )
 }

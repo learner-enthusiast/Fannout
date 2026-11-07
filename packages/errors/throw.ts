@@ -12,7 +12,7 @@ export const errors = {
 
   notFound: (resource: string) => throwApp(ErrorCode.NOT_FOUND, `${resource} not found`),
 
-  conflict: (message: string) => throwApp(ErrorCode.CONFLICT, message),
+  conflict: (message: string, details?: unknown) => throwApp(ErrorCode.CONFLICT, message, details),
 
   validation: (message: string, details?: unknown) =>
     throwApp(ErrorCode.VALIDATION, message, details),
@@ -20,6 +20,8 @@ export const errors = {
   badRequest: (message: string, details?: unknown) =>
     throwApp(ErrorCode.BAD_REQUEST, message, details),
 
+  mediaInUse: (message: string, details?: unknown) => throwApp(ErrorCode.MEDIA_IN_USE, message, details),
+  tooManyRequests: (message: string, details?: unknown) => throwApp(ErrorCode.TOO_MANY_REQUESTS, message, details),
   internal: (message = "Something went wrong", cause?: unknown): never => {
     throw new AppError({
       code: ErrorCode.INTERNAL,

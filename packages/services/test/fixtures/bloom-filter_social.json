@@ -1,0 +1,16 @@
+{
+  "video": "bloom-filters-explained",
+  "files": { "main": "bloom-filters_16x9.mp4", "subtitles": "bloom-filters.srt" },
+  "linkedin": { "post": "A Bloom filter answers \"have I seen this?\" in constant space. It can say maybe, never a false no.", "hashtags": ["#datastructures", "#systemdesign"] },
+  "x": { "post": "Bloom filters: \"definitely not\" or \"probably yes\" in a few bits per item.", "hashtags": ["#programming"], "post_long": null },
+  "instagram": { "caption": "Bloom filters in 60 seconds.", "hashtags": ["#coding", "#cs"] },
+  "facebook": { "post": "How do databases skip disk reads? Bloom filters.", "hashtags": ["#tech"] },
+  "threads": { "post": "Bloom filters are my favourite probabilistic trick.", "hashtags": ["#coding"] },
+  "youtube": {
+    "title": "Bloom Filters Explained: Fast Membership Checks With Tiny Memory",
+    "description": "What a Bloom filter is, how false positives happen, and where Cassandra uses them.",
+    "tags": ["bloom filter", "data structures"],
+    "hashtags": ["#bloomfilter", "#datastructures"],
+    "shorts_title": "Bloom filters in 60s"
+  }
+}

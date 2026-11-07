@@ -6,6 +6,9 @@ export const ErrorCode = {
   CONFLICT: "CONFLICT",
   VALIDATION: "VALIDATION",
   BAD_REQUEST: "BAD_REQUEST",
+  TOO_MANY_REQUESTS: "TOO_MANY_REQUESTS",
+  /** Delete blocked: still used by unpublished posts (details.posts). */
+  MEDIA_IN_USE: "MEDIA_IN_USE",
   INTERNAL: "INTERNAL",
 } as const;
 
@@ -20,10 +23,13 @@ export function statusFromCode(code: ErrorCode): number {
     case ErrorCode.NOT_FOUND:
       return 404;
     case ErrorCode.CONFLICT:
+    case ErrorCode.MEDIA_IN_USE:
       return 409;
     case ErrorCode.VALIDATION:
     case ErrorCode.BAD_REQUEST:
       return 400;
+    case ErrorCode.TOO_MANY_REQUESTS:
+      return 429;
     case ErrorCode.INTERNAL:
     default:
       return 500;

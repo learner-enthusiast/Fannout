@@ -2,7 +2,7 @@ import type { RouterOutputs } from '@repo/trpc/client'
 
 export type MediaType = RouterOutputs['media']['get']['type']
 export type Orientation = NonNullable<RouterOutputs['media']['get']['orientation']>
-export type FolderRole = RouterOutputs['folders']['get']['items'][number]['role']
+export type FolderRole = RouterOutputs['folders']['items']['items'][number]['role']
 
 /** Section order + titles on the folder page (mirrors the API's FOLDER_ROLES). */
 export const ROLE_SECTIONS: { role: FolderRole; title: string; label: string }[] = [

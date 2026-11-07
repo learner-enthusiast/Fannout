@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { PaginationInputSchema, paginatedOutput } from "../common/pagination";
 import { FolderRoleSchema } from "../media-folders/roles";
 
 export const MediaTypeSchema = z.enum(["video", "image", "subtitle", "json", "other"]);
@@ -13,15 +14,18 @@ export type Orientation = z.infer<typeof OrientationSchema>;
 export const JsonSchemaKindSchema = z.enum(["social_package"]);
 
 export const SubtitleSummarySchema = z.object({
-  segments: z.number().int().nonnegative(),
-  durationMs: z.number().int().nonnegative(),
+  segments: z.number().int().nonnegative().describe("Number of subtitle cues."),
+  durationMs: z.number().int().nonnegative().describe("End time of the last cue, in milliseconds."),
 });
 export type SubtitleSummary = z.infer<typeof SubtitleSummarySchema>;
 
 /** Folder proposed from a social-package JSON; only created when the user confirms. */
 export const FolderSuggestionSchema = z.object({
-  folderName: z.string().min(1).max(200),
-  items: z.array(z.object({ mediaId: z.uuid(), role: FolderRoleSchema })),
+  folderName: z.string().min(1).max(200).describe("Suggested folder name."),
+  items: z.array(z.object({
+    mediaId: z.uuid().describe("Media ID that would be added to the folder."),
+    role: FolderRoleSchema.describe("Role the media would take in the folder."),
+  })).describe("Media the folder would contain, with their roles."),
 });
 export type FolderSuggestion = z.infer<typeof FolderSuggestionSchema>;
 
@@ -151,38 +155,42 @@ export function orientationOf(width: number | null, height: number | null): Orie
 }
 
 export const CreateUploadInputSchema = z.object({
-  filename: z.string().trim().min(1).max(255),
-  mimeType: z.string().trim().max(255),
-  sizeBytes: z.number().int().positive().max(MAX_UPLOAD_BYTES),
+  filename: z.string().trim().min(1).max(255).describe("Original filename including extension (.mp4, .jpg, .srt, .vtt, .json …)."),
+  mimeType: z.string().trim().max(255).describe("MIME type of the file (video/*, image/*, application/json); may be empty for .srt/.vtt."),
+  sizeBytes: z.number().int().positive().max(MAX_UPLOAD_BYTES).describe("Exact file size in bytes. Videos/images up to 5 GiB; subtitles and JSON up to 1 MiB."),
   /** Display name; defaults to the filename without its extension. */
-  name: MediaNameSchema.optional(),
+  name: MediaNameSchema.optional().describe("Display name (1–200 chars); defaults to the filename without its extension."),
 });
 export type CreateUploadInput = z.infer<typeof CreateUploadInputSchema>;
 
 export const CreateUploadResultSchema = z.object({
-  mediaId: z.uuid(),
-  partSize: z.number().int().positive(),
-  parts: z.array(z.object({ partNumber: z.number().int().positive(), url: z.url() })),
+  mediaId: z.uuid().describe("ID of the new media item (status uploading)."),
+  partSize: z.number().int().positive().describe("Bytes per part; part N covers bytes [(N-1)*partSize, N*partSize)."),
+  parts: z.array(z.object({
+    partNumber: z.number().int().positive().describe("1-based part number."),
+    url: z.url().describe("Presigned URL; PUT this part's bytes here and keep the ETag response header."),
+  })).describe("One presigned upload URL per part."),
 });
 export type CreateUploadResult = z.infer<typeof CreateUploadResultSchema>;
 
 export const CompleteUploadInputSchema = z.object({
-  mediaId: z.uuid(),
+  mediaId: z.uuid().describe("Media ID returned by POST /media/uploads."),
   parts: z
     .array(
       z.object({
-        partNumber: z.number().int().min(1).max(10_000),
-        etag: z.string().trim().min(1).max(200),
+        partNumber: z.number().int().min(1).max(10_000).describe("1-based part number."),
+        etag: z.string().trim().min(1).max(200).describe("ETag header returned by the part PUT."),
       }),
     )
     .min(1)
-    .max(10_000),
+    .max(10_000)
+    .describe("Every uploaded part with its ETag."),
 });
 export type CompleteUploadInput = z.infer<typeof CompleteUploadInputSchema>;
 
 export const FailUploadInputSchema = z.object({
-  mediaId: z.uuid(),
-  error: z.string().trim().min(1).max(500),
+  mediaId: z.uuid().describe("Media ID of the upload that failed."),
+  error: z.string().trim().min(1).max(500).describe("Short reason the upload failed."),
 });
 export type FailUploadInput = z.infer<typeof FailUploadInputSchema>;
 
@@ -192,57 +200,64 @@ export type FailUploadInput = z.infer<typeof FailUploadInputSchema>;
 
 export const SearchQuerySchema = z.string().trim().min(1).max(100);
 
-export const MediaListInputSchema = z.object({
-  q: SearchQuerySchema.optional(),
-  type: MediaTypeSchema.optional(),
-  orientation: OrientationSchema.optional(),
-  cursor: z.string().min(1).max(200).nullish(),
-  limit: z.number().int().min(1).max(50).default(24),
+export const MediaListInputSchema = PaginationInputSchema.extend({
+  q: SearchQuerySchema.optional().describe("Case-insensitive search on the media name."),
+  type: MediaTypeSchema.optional().describe("Only media of this type."),
+  orientation: OrientationSchema.optional().describe("Only media with this orientation (images and videos)."),
 });
 export type MediaListInput = z.input<typeof MediaListInputSchema>;
 
 export const MediaViewSchema = z.object({
-  id: z.uuid(),
-  name: z.string(),
-  type: MediaTypeSchema,
-  status: MediaStatusSchema,
-  originalFilename: z.string().nullable(),
-  mimeType: z.string(),
-  sizeBytes: z.number().nullable(),
-  width: z.number().nullable(),
-  height: z.number().nullable(),
-  durationSeconds: z.number().nullable(),
-  orientation: OrientationSchema.nullable(),
-  codec: z.object({ video: z.string().optional(), audio: z.string().optional() }).nullable(),
-  fps: z.number().nullable(),
-  jsonSchema: JsonSchemaKindSchema.nullable(),
-  subtitle: SubtitleSummarySchema.nullable(),
-  folderSuggestion: FolderSuggestionSchema.nullable(),
-  error: z.string().nullable(),
+  id: z.uuid().describe("Media ID."),
+  name: z.string().describe("Display name."),
+  type: MediaTypeSchema.describe("Kind of media."),
+  status: MediaStatusSchema.describe("Processing state; only ready media can be published."),
+  originalFilename: z.string().nullable().describe("Filename at upload time."),
+  mimeType: z.string().describe("Stored content type."),
+  sizeBytes: z.number().nullable().describe("File size in bytes."),
+  width: z.number().nullable().describe("Pixel width (images and videos)."),
+  height: z.number().nullable().describe("Pixel height (images and videos)."),
+  durationSeconds: z.number().nullable().describe("Duration in seconds (videos and subtitles)."),
+  orientation: OrientationSchema.nullable().describe("Derived from width and height."),
+  codec: z.object({
+    video: z.string().optional().describe("Video codec name."),
+    audio: z.string().optional().describe("Audio codec name."),
+  }).nullable().describe("Detected codecs (videos)."),
+  fps: z.number().nullable().describe("Frames per second (videos)."),
+  jsonSchema: JsonSchemaKindSchema.nullable().describe("Recognised JSON format, for JSON media."),
+  subtitle: SubtitleSummarySchema.nullable().describe("Cue summary, for subtitle media."),
+  folderSuggestion: FolderSuggestionSchema.nullable().describe("Folder proposed from a social-package JSON; create it with POST /folders/from-suggestion."),
+  error: z.string().nullable().describe("Why processing failed, when status is failed."),
   /** Presigned GET URL; null until the upload has finished. */
-  url: z.string().nullable(),
-  createdAt: z.date(),
-  updatedAt: z.date(),
+  url: z.string().nullable().describe("Short-lived presigned download URL; null until the upload has finished."),
+  createdAt: z.date().describe("When the media was created."),
+  updatedAt: z.date().describe("When the media last changed."),
 });
 export type MediaView = z.infer<typeof MediaViewSchema>;
 
-export const MediaPageSchema = z.object({
-  items: z.array(MediaViewSchema),
-  nextCursor: z.string().nullable(),
-});
+export const MediaPageSchema = paginatedOutput(MediaViewSchema);
 export type MediaPage = z.infer<typeof MediaPageSchema>;
 
 export const MediaDetailSchema = MediaViewSchema.extend({
-  folders: z.array(z.object({ folderId: z.uuid(), name: z.string(), role: FolderRoleSchema })),
+  folders: z.array(z.object({
+    folderId: z.uuid().describe("Folder ID."),
+    name: z.string().describe("Folder name."),
+    role: FolderRoleSchema.describe("Role of this media in that folder."),
+  })).describe("Folders that contain this media."),
+  /** Posts that use this media (published ones are unaffected by a delete). */
+  inUseByPosts: z.number().int().nonnegative().describe("Number of posts that use this media; published posts are unaffected by a delete."),
 });
 export type MediaDetail = z.infer<typeof MediaDetailSchema>;
 
-export const RenameMediaInputSchema = z.object({ mediaId: z.uuid(), name: MediaNameSchema });
+export const RenameMediaInputSchema = z.object({
+  mediaId: z.uuid().describe("Media ID."),
+  name: MediaNameSchema.describe("New display name (1–200 chars)."),
+});
 
-export const DeleteMediaInputSchema = z.object({ mediaId: z.uuid(), force: z.boolean().optional() });
+export const DeleteMediaInputSchema = z.object({ mediaId: z.uuid().describe("Media ID.") });
 export const DeleteMediaResultSchema = z.object({
-  deleted: z.boolean(),
-  /** Folders that still use the media (only when not forced). */
-  inUse: z.array(z.string()),
+  deleted: z.literal(true).describe("Always true."),
+  /** True when it was already gone (deletes are idempotent). */
+  alreadyGone: z.boolean().describe("True when the media was already deleted (deletes are idempotent)."),
 });
 export type DeleteMediaResult = z.infer<typeof DeleteMediaResultSchema>;

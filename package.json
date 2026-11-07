@@ -11,7 +11,9 @@
     "lint": "turbo run lint",
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
     "check-types": "turbo run check-types",
-    "test": "turbo run test"
+    "test": "turbo run test",
+    "docs:agent": "pnpm --filter @repo/api exec dotenv -e ../../.env -- tsx ../../scripts/generate-agent-docs.ts",
+    "docs:agent:check": "pnpm --filter @repo/api exec dotenv -e ../../.env -- tsx ../../scripts/generate-agent-docs.ts --check"
   },
   "devDependencies": {
     "prettier": "^3.7.4",

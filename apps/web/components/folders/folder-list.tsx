@@ -6,15 +6,15 @@ import Link from 'next/link'
 import { useState } from 'react'
 
 import type { RouterOutputs } from '@repo/trpc/client'
-import { Alert, AlertDescription, AlertTitle } from '~/components/ui/alert'
+import { InfiniteList } from '~/components/infinite-list'
+import { CardMenu, cardMenuSlot, useDeleteFolder, useIsDeleting } from '~/components/library/delete-actions'
 import { Button } from '~/components/ui/button'
 import { EmptyState } from '~/components/ui/empty-state'
 import { Input } from '~/components/ui/input'
 import { Skeleton } from '~/components/ui/skeleton'
-import { Spinner } from '~/components/ui/spinner'
 import { useDebouncedValue } from '~/hooks/use-debounced-value'
-import { useInfiniteScroll } from '~/hooks/use-infinite-scroll'
-import { normalizeTRPCError } from '~/lib/error'
+import { infiniteOptions, useInfiniteList } from '~/hooks/use-infinite-list'
+import { cn } from '~/lib/utils'
 import { trpc } from '~/trpc/client'
 
 type Folder = RouterOutputs['folders']['list']['items'][number]
@@ -32,9 +32,21 @@ export function NewFolderPrimaryButton() {
     )
 }
 
-function FolderCard({ folder }: { folder: Folder }) {
+function FolderCard({ folder, onDelete }: { folder: Folder; onDelete: () => void }) {
+    const deleting = useIsDeleting(folder.id)
     return (
-        <li>
+        <li
+            onKeyDown={(event) => {
+                if (event.key === 'Delete' && !deleting) {
+                    event.preventDefault()
+                    onDelete()
+                }
+            }}
+            className={cn(
+                'group relative transition-opacity duration-fast motion-reduce:transition-none',
+                deleting && 'pointer-events-none opacity-0'
+            )}
+        >
             <Link
                 href={`/media/folders/${folder.id}`}
                 className="flex flex-col overflow-hidden rounded-surface border border-border bg-card outline-none transition-colors duration-fast ease-out hover:border-primary focus-visible:ring-2 focus-visible:ring-ring"
@@ -55,6 +67,9 @@ function FolderCard({ folder }: { folder: Folder }) {
                     </span>
                 </div>
             </Link>
+            <span className={cardMenuSlot}>
+                <CardMenu label={folder.name} disabled={deleting} onDelete={onDelete} />
+            </span>
         </li>
     )
 }
@@ -62,16 +77,9 @@ function FolderCard({ folder }: { folder: Folder }) {
 export function FolderList() {
     const [query, setQuery] = useState('')
     const q = useDebouncedValue(query.trim())
-    const list = trpc.folders.list.useInfiniteQuery(
-        { limit: 24, ...(q ? { q } : {}) },
-        { staleTime: 0, getNextPageParam: (last) => last.nextCursor ?? undefined }
-    )
-    const sentinel = useInfiniteScroll({
-        hasMore: Boolean(list.hasNextPage),
-        loading: list.isFetchingNextPage,
-        onLoadMore: () => void list.fetchNextPage(),
-    })
-    const items = list.data?.pages.flatMap((page) => page.items) ?? []
+    const foldersQuery = trpc.folders.list.useInfiniteQuery({ ...(q ? { q } : {}) }, infiniteOptions({ staleTime: 0 }))
+    const list = useInfiniteList(foldersQuery)
+    const deleteFolder = useDeleteFolder()
 
     return (
         <div className="flex flex-col gap-4">
@@ -87,45 +95,32 @@ export function FolderList() {
                     className="ps-9"
                 />
             </div>
-            {list.isPending ? (
-                <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4" aria-busy>
-                    {Array.from({ length: 4 }, (_, i) => (
-                        <li key={i}>
-                            <Skeleton className="aspect-video w-full rounded-surface" />
-                        </li>
-                    ))}
-                </ul>
-            ) : list.isError ? (
-                <Alert variant="destructive">
-                    <AlertTitle>Could not load folders</AlertTitle>
-                    <AlertDescription>{normalizeTRPCError(list.error).message}</AlertDescription>
-                </Alert>
-            ) : items.length === 0 ? (
-                q ? (
-                    <EmptyState icon={SearchIcon} title="No matches" description="No folder name matches that search." />
-                ) : (
-                    <EmptyState
-                        icon={FolderIcon}
-                        title="No folders yet"
-                        description="Group a video's cuts, trailers, thumbnails and subtitles in one place."
-                        actions={<NewFolderPrimaryButton />}
+            <InfiniteList
+                list={list}
+                getKey={(folder) => folder.id}
+                className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
+                skeletonCount={4}
+                skeleton={<Skeleton className="aspect-video w-full rounded-surface" />}
+                empty={
+                    q ? (
+                        <EmptyState icon={SearchIcon} title="No matches" description="No folder name matches that search." />
+                    ) : (
+                        <EmptyState
+                            icon={FolderIcon}
+                            title="No folders yet"
+                            description="Group a video's cuts, trailers, thumbnails and subtitles in one place."
+                            actions={<NewFolderPrimaryButton />}
+                        />
+                    )
+                }
+                renderItem={(folder) => (
+                    <FolderCard
+                        folder={folder}
+                        onDelete={() => deleteFolder.request({ id: folder.id, name: folder.name, itemCount: folder.itemCount })}
                     />
-                )
-            ) : (
-                <>
-                    <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                        {items.map((folder) => (
-                            <FolderCard key={folder.id} folder={folder} />
-                        ))}
-                    </ul>
-                    <div ref={sentinel} aria-hidden className="h-1" />
-                    {list.isFetchingNextPage ? (
-                        <div className="flex justify-center">
-                            <Spinner />
-                        </div>
-                    ) : null}
-                </>
-            )}
+                )}
+            />
+            {deleteFolder.dialog}
         </div>
     )
 }

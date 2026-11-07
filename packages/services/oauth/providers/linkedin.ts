@@ -22,7 +22,8 @@ export function createLinkedInProvider(credentials: ProviderCredentials): OAuthP
     provider: "LINKEDIN",
     redirectUri: credentials.redirectUri,
     scopes: splitScopes(credentials.scopes),
-    requiredScopes: ["openid", "profile"],
+    // w_member_social (Share on LinkedIn) is what lets us post for the member.
+    requiredScopes: ["openid", "profile", "w_member_social"],
     usePkce: false,
     useNonce: false,
     isOidc: true,

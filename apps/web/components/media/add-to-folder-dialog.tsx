@@ -22,6 +22,8 @@ import { useDebouncedValue } from '~/hooks/use-debounced-value'
 import { guessRole, type FolderRole, type MediaType, type Orientation } from '~/lib/media-roles'
 import { cn } from '~/lib/utils'
 import { trpc } from '~/trpc/client'
+import { InfiniteList } from '~/components/infinite-list'
+import { infiniteOptions, useInfiniteList } from '~/hooks/use-infinite-list'
 
 import { RoleSelect } from './role-select'
 
@@ -129,10 +131,12 @@ export function AddToFolderDialog({
         if (open) setAssignments(initialAssignments(media))
     }, [open, media])
 
-    const folders = trpc.folders.list.useQuery(
-        { limit: 20, ...(q ? { q } : {}) },
-        { enabled: open && tab === 'existing', staleTime: 0 }
+    const [foldersRoot, setFoldersRoot] = useState<HTMLDivElement | null>(null)
+    const foldersQuery = trpc.folders.list.useInfiniteQuery(
+        { ...(q ? { q } : {}) },
+        infiniteOptions({ enabled: open && tab === 'existing', staleTime: 0 })
     )
+    const folders = useInfiniteList(foldersQuery)
 
     const finish = (folder: { id: string; name: string }) => {
         void utils.folders.list.invalidate()
@@ -180,16 +184,16 @@ export function AddToFolderDialog({
                             value={query}
                             onChange={(event) => setQuery(event.target.value)}
                         />
-                        {folders.isPending ? (
-                            <Skeleton className="h-24 w-full" />
-                        ) : (folders.data?.items.length ?? 0) === 0 ? (
-                            <p className="py-4 text-center text-meta">
-                                No folders{q ? ' match' : ' yet'}. Create a new one instead.
-                            </p>
-                        ) : (
-                            <ul className="flex max-h-48 flex-col gap-1 overflow-y-auto" role="listbox" aria-label="Folders">
-                                {folders.data?.items.map((folder) => (
-                                    <li key={folder.id}>
+                        <div ref={setFoldersRoot} className="max-h-48 overflow-y-auto" role="listbox" aria-label="Folders">
+                            <InfiniteList
+                                list={folders}
+                                root={foldersRoot}
+                                getKey={(folder) => folder.id}
+                                className="flex flex-col gap-1"
+                                skeleton={<Skeleton className="h-10 w-full rounded-control" />}
+                                empty={<p className="py-4 text-center text-meta">No folders{q ? ' match' : ' yet'}. Create a new one instead.</p>}
+                                renderItem={(folder) => (
+                                    <li>
                                         <button
                                             type="button"
                                             role="option"
@@ -205,9 +209,9 @@ export function AddToFolderDialog({
                                             <span className="text-mono text-muted-foreground">{folder.itemCount}</span>
                                         </button>
                                     </li>
-                                ))}
-                            </ul>
-                        )}
+                                )}
+                            />
+                        </div>
                     </TabsContent>
                     <TabsContent value="new" className="pt-4">
                         <FormField label="Folder name" required>

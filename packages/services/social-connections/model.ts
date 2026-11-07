@@ -1,23 +1,23 @@
 import { z } from "zod";
 
 export const SocialConnectionRowSchema = z.object({
-  id: z.uuid(),
-  userId: z.uuid(),
-  provider: z.string().min(1),
-  providerAccountId: z.string().min(1),
-  accountType: z.string().nullable(),
-  username: z.string().nullable(),
-  displayName: z.string().nullable(),
-  profilePictureUrl: z.string().nullable(),
-  config: z.record(z.string(), z.unknown()).nullable(),
+  id: z.uuid().describe("Connection ID; use as socialConnectionId when publishing."),
+  userId: z.uuid().describe("Owner's user ID."),
+  provider: z.string().min(1).describe("LINKEDIN, X, YOUTUBE, FACEBOOK or THREADS."),
+  providerAccountId: z.string().min(1).describe("Account/page/channel ID on the platform."),
+  accountType: z.string().nullable().describe("Kind of account, e.g. person, organization, page or channel."),
+  username: z.string().nullable().describe("Account handle."),
+  displayName: z.string().nullable().describe("Account display name."),
+  profilePictureUrl: z.string().nullable().describe("Account avatar URL."),
+  config: z.record(z.string(), z.unknown()).nullable().describe("Provider-specific settings for this account."),
   accessTokenEncrypted: z.string().nullable(),
   refreshTokenEncrypted: z.string().nullable(),
-  accessExpiry: z.date().nullable(),
-  refreshExpiry: z.date().nullable(),
-  scopes: z.array(z.string()).nullable(),
-  isActive: z.boolean(),
-  createdAt: z.date(),
-  updatedAt: z.date(),
+  accessExpiry: z.date().nullable().describe("When the platform access token expires."),
+  refreshExpiry: z.date().nullable().describe("When the platform refresh token expires."),
+  scopes: z.array(z.string()).nullable().describe("Platform permissions granted."),
+  isActive: z.boolean().describe("False once disconnected."),
+  createdAt: z.date().describe("When the account was connected."),
+  updatedAt: z.date().describe("When the connection last changed."),
 });
 
 export type SocialConnectionRow = z.infer<typeof SocialConnectionRowSchema>;
@@ -71,7 +71,7 @@ export type SocialConnectionStatus = z.infer<typeof SocialConnectionStatusSchema
 
 /** What clients see: no token fields, plus a derived status. */
 export const SocialConnectionViewSchema = SocialConnectionPublicSchema.extend({
-  status: SocialConnectionStatusSchema,
+  status: SocialConnectionStatusSchema.describe("connected = ready to publish; reconnect = the human must reconnect in the web app; disconnected."),
 });
 
 export type SocialConnectionView = z.infer<typeof SocialConnectionViewSchema>;

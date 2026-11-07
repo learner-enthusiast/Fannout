@@ -2,6 +2,11 @@
 
 Product name: **Fannout**, spelled with a double n. Never drop the second n.
 
+## Lists, mutations, deletes — MANDATORY
+Read [docs/conventions/frontend.md](../../docs/conventions/frontend.md): every list uses
+`useInfiniteList` + `<InfiniteList>`, list mutations are optimistic (`lib/optimistic.ts`),
+destructive actions use ConfirmDialog + a kebab card menu.
+
 ## UI work — MANDATORY
 Read and follow [`DESIGN.md`](./DESIGN.md) for ANY UI change. It overrides skill
 defaults and shadcn defaults.

@@ -1,13 +1,25 @@
 import { z } from "zod";
 import { MediaRowSchema } from "../media/model";
 
-export const PostStatusSchema = z.enum(["draft", "scheduled", "publishing", "published", "failed"]);
+/** draft/scheduled (scheduler) + queued/cancelled (composer batches). */
+export const PostStatusSchema = z.enum([
+  "draft",
+  "scheduled",
+  "queued",
+  "publishing",
+  "published",
+  "failed",
+  "cancelled",
+  "deleting",
+  "deleted",
+]);
 export type PostStatus = z.infer<typeof PostStatusSchema>;
 
 export const PostRowSchema = z.object({
   id: z.uuid(),
   userId: z.uuid(),
   socialConnectionId: z.uuid(),
+  name: z.string(),
   caption: z.string().nullable(),
   config: z.record(z.string(), z.unknown()).nullable(),
   status: PostStatusSchema,
@@ -15,6 +27,10 @@ export const PostRowSchema = z.object({
   postUrl: z.string().nullable(),
   postMediaId: z.uuid().nullable(),
   publishedAt: z.date().nullable(),
+  batchId: z.uuid().nullable(),
+  idempotencyKey: z.string().nullable(),
+  errorCode: z.string().nullable(),
+  errorMessage: z.string().nullable(),
   createdAt: z.date(),
   updatedAt: z.date(),
 });
@@ -34,9 +50,13 @@ export const PostWithMediaSchema = PostRowSchema.extend({
 
 export type PostWithMedia = z.infer<typeof PostWithMediaSchema>;
 
+/** Post display name: required, at most 100 characters. */
+export const PostNameSchema = z.string().trim().min(1).max(100);
+
 export const CreatePostInputSchema = z.object({
   userId: z.uuid(),
   socialConnectionId: z.uuid(),
+  name: PostNameSchema.default("Untitled post"),
   caption: z.string().nullable().optional(),
   config: z.record(z.string(), z.unknown()).nullable().optional(),
   status: PostStatusSchema.optional(),
@@ -47,6 +67,7 @@ export type CreatePostInput = z.input<typeof CreatePostInputSchema>;
 export const UpdatePostInputSchema = z
   .object({
     socialConnectionId: z.uuid(),
+    name: PostNameSchema,
     caption: z.string().nullable(),
     config: z.record(z.string(), z.unknown()).nullable(),
     status: PostStatusSchema,

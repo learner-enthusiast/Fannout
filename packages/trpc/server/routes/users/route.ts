@@ -2,15 +2,16 @@ import { getUserByClerkId } from "@repo/services/users";
 import { MeOutputSchema } from "@repo/services/users/model";
 import { TRPCError } from "@trpc/server";
 import { zodUndefinedModel } from "../../schema";
-import { protectedProcedure, router } from "../../trpc";
+import { router, sessionOnlyProcedure } from "../../trpc";
 
 export const usersRouter = router({
-  me: protectedProcedure
+  me: sessionOnlyProcedure
     .meta({ openapi: { method: "GET", path: "/me" } })
     .input(zodUndefinedModel)
     .output(MeOutputSchema)
     .query(async ({ ctx }) => {
-      const user = await getUserByClerkId(ctx.userId);
+      // sessionOnlyProcedure guarantees a Clerk session.
+      const user = await getUserByClerkId(ctx.userId!);
       if (!user || user.deletedAt) {
         throw new TRPCError({ code: "NOT_FOUND", message: "User not found" });
       }

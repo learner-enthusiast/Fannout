@@ -79,8 +79,8 @@ export function createWorker<N extends QueueName>(
 }
 
 function assertJobId(jobId: string) {
-  // BullMQ reserves ":" as a key separator in custom ids.
-  if (!jobId || jobId.includes(":")) throw new Error(`Invalid job id "${jobId}"`);
+  // BullMQ reserves ":" in custom ids, except ids of exactly three parts ("sched:{postId}:v1").
+  if (!jobId || (jobId.includes(":") && jobId.split(":").length !== 3)) throw new Error(`Invalid job id "${jobId}"`);
 }
 
 export type ScheduleJobInput<N extends QueueName> = {

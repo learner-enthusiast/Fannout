@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { MediaRowSchema } from "../media/model";
 
-export const PostMediaRoleSchema = z.enum(["primary", "thumbnail", "attachment"]);
+/** primary/attachment (existing) + video/image (composer batches); thumbnail is shared. */
+export const PostMediaRoleSchema = z.enum(["primary", "thumbnail", "attachment", "video", "image"]);
 export type PostMediaRole = z.infer<typeof PostMediaRoleSchema>;
 
 export const PostMediaRowSchema = z.object({

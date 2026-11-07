@@ -36,6 +36,41 @@
       "when": 1794036327374,
       "tag": "0004_media_folders",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1794038556361,
+      "tag": "0005_posts_batches",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1794041149712,
+      "tag": "0006_ai_generations",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1794046727795,
+      "tag": "0007_posts_name",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1794047245253,
+      "tag": "0008_posts_delete_edit_api_keys",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1794051255905,
+      "tag": "0009_scheduled_posts_lead_time",
+      "breakpoints": true
     }
   ]
 }

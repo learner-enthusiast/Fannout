@@ -39,11 +39,17 @@ import { formatDuration } from '~/lib/media-format'
 import { ROLE_LABEL, ROLE_SECTIONS, type FolderRole } from '~/lib/media-roles'
 import { cn } from '~/lib/utils'
 import { trpc } from '~/trpc/client'
+import { InfiniteList } from '~/components/infinite-list'
+import { useDeleteFolder } from '~/components/library/delete-actions'
+import { infiniteOptions, useInfiniteList } from '~/hooks/use-infinite-list'
+import { removeFromInfiniteCache, restoreSnapshot } from '~/lib/optimistic'
+import { useQueryClient } from '@tanstack/react-query'
+import { getQueryKey } from '@trpc/react-query'
 
 import { AddMediaDialog } from './add-media-dialog'
 
 type Folder = RouterOutputs['folders']['get']
-type Item = Folder['items'][number]
+type Item = RouterOutputs['folders']['items']['items'][number]
 
 function IconAction({
     label,
@@ -195,46 +201,103 @@ function ItemCard({
     )
 }
 
-export function FolderDetailView({ folderId }: { folderId: string }) {
-    const router = useRouter()
+/** One role's items, 10 at a time. Moving = updateItem({position}) (server renumbers). */
+function RoleSection({ folderId, role, title, count }: { folderId: string; role: FolderRole; title: string; count: number }) {
+    const queryClient = useQueryClient()
     const utils = trpc.useUtils()
-    const [editing, setEditing] = useState(false)
-    const [adding, setAdding] = useState(false)
-    const [confirmDelete, setConfirmDelete] = useState(false)
+    const [drag, setDrag] = useState<string | null>(null)
     const [removing, setRemoving] = useState<Item | null>(null)
-    const [drag, setDrag] = useState<{ role: FolderRole; mediaId: string } | null>(null)
+    const itemsQuery = trpc.folders.items.useInfiniteQuery({ folderId, role }, infiniteOptions({ staleTime: 0 }))
+    const list = useInfiniteList(itemsQuery)
 
-    const query = trpc.folders.get.useQuery({ folderId }, { staleTime: 0 })
-    const onFolder = (folder: Folder) => {
-        utils.folders.get.setData({ folderId }, folder)
+    const refresh = () => {
+        void utils.folders.items.invalidate({ folderId })
+        void utils.folders.get.invalidate({ folderId })
         void utils.folders.list.invalidate()
     }
-    const reorder = trpc.folders.reorder.useMutation({
-        onMutate: ({ role, mediaIds }) => {
-            const current = utils.folders.get.getData({ folderId })
-            if (!current) return
-            const others = current.items.filter((item) => item.role !== role)
-            const byId = new Map(current.items.map((item) => [item.mediaId, item]))
-            const moved = mediaIds.map((id, position) => ({ ...byId.get(id)!, position }))
-            utils.folders.get.setData({ folderId }, { ...current, items: [...others, ...moved] })
-        },
-        onSuccess: onFolder,
-        onError: () => void utils.folders.get.invalidate({ folderId }),
-    })
-    const updateItem = trpc.folders.updateItem.useMutation({ onSuccess: onFolder })
+    const updateItem = trpc.folders.updateItem.useMutation({ onSettled: refresh })
     const removeItem = trpc.folders.removeItem.useMutation({
-        onSuccess: (folder) => {
-            onFolder(folder)
-            toast.success('Removed from folder')
+        onMutate: async ({ mediaId }) => {
+            const queryKey = getQueryKey(trpc.folders.items, { folderId, role }, 'infinite')
+            await queryClient.cancelQueries({ queryKey })
+            return { snapshot: removeFromInfiniteCache<Item>(queryClient, queryKey, (i) => i.mediaId === mediaId) }
         },
-    })
-    const deleteFolder = trpc.folders.delete.useMutation({
-        onSuccess: () => {
-            void utils.folders.list.invalidate()
-            toast.success('Folder deleted', { description: 'The media is still in your library.' })
-            router.push('/media/folders')
+        onError: (error, _vars, context) => {
+            if (context) restoreSnapshot(queryClient, context.snapshot)
+            toast.error(normalizeTRPCError(error).message)
         },
+        onSuccess: () => toast.success('Removed from folder'),
+        onSettled: refresh,
     })
+    const move = (from: number, to: number) => {
+        const item = list.items[from]
+        if (!item || to < 0 || to >= count || from === to) return
+        updateItem.mutate({ folderId, mediaId: item.mediaId, position: to })
+    }
+
+    return (
+        <Card>
+            <CardHeader>
+                <CardTitle>{title}</CardTitle>
+                <CardDescription>
+                    {ROLE_LABEL[role]} · <span className="text-mono">{count}</span> · drag to reorder
+                </CardDescription>
+            </CardHeader>
+            <CardContent>
+                <InfiniteList
+                    list={list}
+                    getKey={(item) => item.mediaId}
+                    className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3"
+                    skeleton={<Skeleton className="aspect-video w-full rounded-surface" />}
+                    empty={<p className="text-meta">Nothing here anymore.</p>}
+                    renderItem={(item, index) => (
+                        <ItemCard
+                            item={item}
+                            index={index}
+                            count={count}
+                            dragging={drag === item.mediaId}
+                            busy={updateItem.isPending}
+                            onPrimary={() => updateItem.mutate({ folderId, mediaId: item.mediaId, isPrimary: !item.isPrimary })}
+                            onMove={(to) => move(index, to)}
+                            onRemove={() => setRemoving(item)}
+                            dragHandlers={{
+                                onDragStart: (event) => {
+                                    setDrag(item.mediaId)
+                                    event.dataTransfer.effectAllowed = 'move'
+                                },
+                                onDragEnd: () => setDrag(null),
+                                // Reorder only within this role.
+                                onDragOver: (event) => drag && event.preventDefault(),
+                                onDrop: (event) => {
+                                    event.preventDefault()
+                                    if (drag) move(list.items.findIndex((i) => i.mediaId === drag), index)
+                                    setDrag(null)
+                                },
+                            }}
+                        />
+                    )}
+                />
+            </CardContent>
+            <ConfirmDialog
+                open={removing !== null}
+                onOpenChange={(open) => !open && setRemoving(null)}
+                title={`Remove “${removing?.media.name ?? 'this item'}” from the folder?`}
+                description="It stays in your media library."
+                confirmLabel="Remove From Folder"
+                onConfirm={() => {
+                    if (removing) removeItem.mutate({ folderId, mediaId: removing.mediaId })
+                }}
+            />
+        </Card>
+    )
+}
+
+export function FolderDetailView({ folderId }: { folderId: string }) {
+    const router = useRouter()
+    const [editing, setEditing] = useState(false)
+    const [adding, setAdding] = useState(false)
+    const query = trpc.folders.get.useQuery({ folderId }, { staleTime: 0 })
+    const deleteFolder = useDeleteFolder({ onDeleted: () => router.push('/media/folders') })
 
     if (query.isPending) {
         return (
@@ -258,16 +321,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
     }
 
     const folder = query.data
-    const byRole = (role: FolderRole) =>
-        folder.items.filter((item) => item.role === role).sort((a, b) => a.position - b.position)
-    const move = (role: FolderRole, from: number, to: number) => {
-        const ids = byRole(role).map((item) => item.mediaId)
-        if (to < 0 || to >= ids.length || from === to) return
-        const [id] = ids.splice(from, 1)
-        ids.splice(to, 0, id!)
-        reorder.mutate({ folderId, role, mediaIds: ids })
-    }
-    const sections = ROLE_SECTIONS.filter((section) => byRole(section.role).length > 0)
+    const sections = ROLE_SECTIONS.filter((section) => (folder.roleCounts[section.role] ?? 0) > 0)
 
     return (
         <>
@@ -280,7 +334,11 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                         <Button variant="ghost" leftIcon={<PencilIcon aria-hidden />} onClick={() => setEditing(true)}>
                             Edit
                         </Button>
-                        <Button variant="destructive" leftIcon={<Trash2Icon aria-hidden />} onClick={() => setConfirmDelete(true)}>
+                        <Button
+                            variant="destructive"
+                            leftIcon={<Trash2Icon aria-hidden />}
+                            onClick={() => deleteFolder.request({ id: folder.id, name: folder.name, itemCount: folder.itemCount })}
+                        >
                             Delete
                         </Button>
                         <Button variant="primary" leftIcon={<ImagePlusIcon aria-hidden />} onClick={() => setAdding(true)}>
@@ -303,82 +361,13 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                     }
                 />
             ) : (
-                sections.map(({ role, title }) => {
-                    const items = byRole(role)
-                    return (
-                        <Card key={role}>
-                            <CardHeader>
-                                <CardTitle>{title}</CardTitle>
-                                <CardDescription>
-                                    {ROLE_LABEL[role]} · <span className="text-mono">{items.length}</span> · drag to reorder
-                                </CardDescription>
-                            </CardHeader>
-                            <CardContent>
-                                <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3" aria-label={ROLE_LABEL[role]}>
-                                    {items.map((item, index) => (
-                                        <ItemCard
-                                            key={item.mediaId}
-                                            item={item}
-                                            index={index}
-                                            count={items.length}
-                                            dragging={drag?.mediaId === item.mediaId}
-                                            busy={reorder.isPending || updateItem.isPending}
-                                            onPrimary={() =>
-                                                updateItem.mutate({ folderId, mediaId: item.mediaId, isPrimary: !item.isPrimary })
-                                            }
-                                            onMove={(to) => move(role, index, to)}
-                                            onRemove={() => setRemoving(item)}
-                                            dragHandlers={{
-                                                onDragStart: (event) => {
-                                                    setDrag({ role, mediaId: item.mediaId })
-                                                    event.dataTransfer.effectAllowed = 'move'
-                                                },
-                                                onDragEnd: () => setDrag(null),
-                                                // Reorder only within the same role.
-                                                onDragOver: (event) => drag?.role === role && event.preventDefault(),
-                                                onDrop: (event) => {
-                                                    event.preventDefault()
-                                                    if (drag && drag.role === role) {
-                                                        move(role, items.findIndex((i) => i.mediaId === drag.mediaId), index)
-                                                    }
-                                                    setDrag(null)
-                                                },
-                                            }}
-                                        />
-                                    ))}
-                                </ul>
-                            </CardContent>
-                        </Card>
-                    )
-                })
+                sections.map(({ role, title }) => (
+                    <RoleSection key={role} folderId={folderId} role={role} title={title} count={folder.roleCounts[role] ?? 0} />
+                ))
             )}
 
-            <AddMediaDialog
-                folderId={folderId}
-                existingIds={folder.items.map((item) => item.mediaId)}
-                open={adding}
-                onOpenChange={setAdding}
-            />
-            <ConfirmDialog
-                open={removing !== null}
-                onOpenChange={(open) => !open && setRemoving(null)}
-                title={`Remove ${removing?.media.name ?? 'this item'} from the folder?`}
-                description="It stays in your media library."
-                confirmLabel="Remove From Folder"
-                onConfirm={async () => {
-                    if (removing) await removeItem.mutateAsync({ folderId, mediaId: removing.mediaId })
-                }}
-            />
-            <ConfirmDialog
-                open={confirmDelete}
-                onOpenChange={setConfirmDelete}
-                title={`Delete folder ${folder.name}?`}
-                description="Only the folder is deleted. Its media stays in your library."
-                confirmLabel="Delete Folder"
-                onConfirm={async () => {
-                    await deleteFolder.mutateAsync({ folderId })
-                }}
-            />
+            <AddMediaDialog folderId={folderId} open={adding} onOpenChange={setAdding} />
+            {deleteFolder.dialog}
         </>
     )
 }

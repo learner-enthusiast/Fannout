@@ -1,14 +1,15 @@
 import type { Metadata } from 'next'
 
-import { ComingSoon } from '~/components/layout/coming-soon'
+import { ComposeView } from '~/components/compose/compose-view'
+import { PageHeader } from '~/components/layout/page-header'
 
 export const metadata: Metadata = { title: 'Compose' }
 
 export default function ComposePage() {
     return (
-        <ComingSoon
-            title="Compose"
-            description="Write a post once and send it to every channel."
-        />
+        <>
+            <PageHeader title="Compose" description="Write once, then tune each account's post." />
+            <ComposeView />
+        </>
     )
 }

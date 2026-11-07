@@ -7,7 +7,8 @@
     "@repo/typescript-config": "workspace:*",
     "@types/express": "^5.0.6",
     "dotenv-cli": "^11.0.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "tsx": "^4.21.0"
   },
   "dependencies": {
     "@clerk/express": "2.1.86",
@@ -20,5 +21,8 @@
     "express": "^5.2.1",
     "trpc-to-openapi": "^3.1.0",
     "zod": "^4.3.5"
+  },
+  "scripts": {
+    "test": "dotenv -e ../../.env -- tsx --test test/*.test.ts"
   }
 }

@@ -1,6 +1,7 @@
 import { z } from "zod";
+import { composeField, xWeightedLength, type ComposeCapabilities } from "../common/compose";
 import { MediaSourceSchema } from "../common/media";
-import { X_LIMITS, X_MAX_MEDIA_PER_POST, X_POLL } from "./constants";
+import { X_LIMITS, X_MAX_MEDIA_PER_POST, X_POLL, X_POST_MAX_CHARS } from "./constants";
 
 /*
  * Zod schemas for XProvider. Option names are the XDK camelCase names
@@ -436,3 +437,44 @@ export const XCountsSchema = z.looseObject({
 export type XUser = z.infer<typeof XUserSchema>;
 export type XPost = z.infer<typeof XPostSchema>;
 export type XListResponse<T> = { data?: T[]; includes?: Record<string, unknown>; meta?: z.infer<typeof XMetaSchema> };
+
+// ---------------------------------------------------------------------------
+// Compose (Fannout composer). Single source for the UI fields and validation.
+// ---------------------------------------------------------------------------
+
+
+export const X_COMPOSE: ComposeCapabilities = {
+  supportsVideo: true,
+  supportsPhotos: true,
+  maxPhotos: X_MAX_MEDIA_PER_POST,
+  minCarousel: 1,
+  supportsThumbnail: false,
+  mediaRules: { maxVideoBytes: 512 * 1024 * 1024, maxVideoSeconds: 140, maxImageBytes: 5 * 1024 * 1024, billed: true },
+  // DELETE /2/tweets/{id} (tweet.write) — https://docs.x.com/x-api/posts/delete-post
+  supportsDelete: true,
+  deleteNote: "Deletes the post on X. X API calls are billed on your plan.",
+  supportsEdit: false,
+  editableFields: [],
+  editNote: "The X API can't edit published posts. Delete and repost instead.",
+};
+
+export const XComposeInputSchema = z.object({
+  text: composeField(
+    z.string().refine((v) => xWeightedLength(v) <= X_POST_MAX_CHARS, `Posts can be at most ${X_POST_MAX_CHARS} characters`).optional(),
+    { label: "Post text", description: "Post text (max 280 X-weighted characters; URLs count 23).", kind: "textarea", countMode: "weighted", maxLength: X_POST_MAX_CHARS, ai: true },
+  ),
+  replySettings: composeField(XReplySettingsSchema.optional(), {
+    label: "Who can reply", description: "Who can reply; omit to let everyone reply.",
+    kind: "select",
+    helper: "Leave empty to let everyone reply.",
+    options: [
+      { value: "following", label: "Accounts you follow" },
+      { value: "mentionedUsers", label: "Only mentioned accounts" },
+      { value: "subscribers", label: "Subscribers" },
+      { value: "verified", label: "Verified accounts" },
+    ],
+  }),
+  madeWithAi: composeField(z.boolean().optional(), { label: "Made with AI", description: "Label the media as made with AI.", kind: "toggle" }),
+  paidPartnership: composeField(z.boolean().optional(), { label: "Paid partnership", description: "Label the post as a paid partnership.", kind: "toggle" }),
+});
+export type XComposeInput = z.infer<typeof XComposeInputSchema>;

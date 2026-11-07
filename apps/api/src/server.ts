@@ -8,6 +8,7 @@ import { generateOpenApiDocument, createOpenApiExpressMiddleware } from "trpc-to
 import { apiReference } from "@scalar/express-api-reference";
 
 import { serverRouter, createContext } from "@repo/trpc/server";
+import { expressRateLimit } from "@repo/services/rate-limit/rate-limiter";
 import helmet from "helmet";
 import { env } from "./env";
 import { errorHandler } from "./middleware/error-handler";
@@ -15,12 +16,24 @@ import { clerkWebhookHandler } from "./webhooks/clerk";
 import { createDefaultOAuthRouter } from "./routes/oauth";
 import { inngestHandler } from "@repo/inngest";
 import { loggableUrl } from "./utils/safe-url";
+import { agentGuide } from "./generated/agent-guide";
 
 export const app = express();
 const openApiDocument = generateOpenApiDocument(serverRouter, {
   title: "Fannout OpenAPI",
   version: "1.0.0",
   baseUrl: env.BASE_URL.concat("/api"),
+  description:
+    "Authenticate with an API key from Settings → API keys: `Authorization: Bearer fn_live_…`. " +
+    "Every API-key response carries X-RateLimit-Limit / -Remaining / -Reset; 429 adds Retry-After.",
+  securitySchemes: {
+    ApiKey: {
+      type: "http",
+      scheme: "bearer",
+      bearerFormat: "fn_live_<32 chars>",
+      description: "Personal API key (Settings → API keys). Scopes limit what it can do.",
+    },
+  },
 });
 
 app.use(clerkMiddleware());
@@ -73,6 +86,18 @@ app.get("/health", (req, res) => {
   return res.json({ message: "Fannout API is healthy", healthy: true });
 });
 
+// Public, static agent discovery documents. The source is generated alongside
+// docs/ai.md so the deployed copy exactly matches the checked-in contract.
+app.get("/ai.md", (_req, res) => {
+  res.set({ "Cache-Control": "public, max-age=300", "Content-Type": "text/markdown; charset=utf-8" });
+  return res.send(agentGuide);
+});
+
+app.get("/llms.txt", (_req, res) => {
+  res.set({ "Cache-Control": "public, max-age=300", "Content-Type": "text/plain; charset=utf-8" });
+  return res.send("# Fannout API\n\nAgent guide: /ai.md\nOpenAPI: /openapi.json\n");
+});
+
 logger.debug(`openapi.json: ${env.BASE_URL}/openapi.json`);
 app.get("/openapi.json", (req, res) => {
   return res.json(openApiDocument);
@@ -82,6 +107,11 @@ logger.debug(`docs: ${env.BASE_URL}/docs`);
 app.use("/docs", apiReference({ url: "/openapi.json" }));
 
 // Plain Express routes (browser redirects); must be mounted before the OpenAPI catch-all.
+// Non-tRPC routes get the same limiter via its Express middleware (keyed by IP here).
+app.use(
+  "/api/oauth/:provider/connect",
+  expressRateLimit("api", (req) => req.ip ?? null, { session: true }),
+);
 app.use(
   "/api/oauth",
   createDefaultOAuthRouter({ webUrl: env.WEB_URL, secureCookies: env.NODE_ENV === "prod" }),

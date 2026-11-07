@@ -2,11 +2,17 @@ import type { Metadata } from 'next'
 
 import { PageHeader } from '~/components/layout/page-header'
 import { NewFolderButton } from '~/components/media/add-to-folder-dialog'
-import { MediaLibrary, UploadButton } from '~/components/media/media-library'
+import { MediaLibrary } from '~/components/media/media-library'
+import { UploadButton } from '~/components/uploads/upload-dialog'
 
 export const metadata: Metadata = { title: 'Media' }
 
-export default function MediaPage() {
+export default async function MediaPage({
+    searchParams,
+}: {
+    searchParams: Promise<{ upload?: string }>
+}) {
+    const { upload } = await searchParams
     return (
         <>
             <PageHeader
@@ -15,7 +21,7 @@ export default function MediaPage() {
                 actions={
                     <>
                         <NewFolderButton />
-                        <UploadButton />
+                        <UploadButton defaultOpen={upload === '1'} />
                     </>
                 }
             />

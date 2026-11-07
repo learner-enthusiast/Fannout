@@ -9,3 +9,4 @@ export * from "./token-manager";
 export * from "./media";
 export * from "./webhooks";
 export * from "./meta-graph";
+export * from "./compose";

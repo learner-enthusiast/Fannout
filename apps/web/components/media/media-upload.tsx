@@ -19,7 +19,15 @@ type Staged = { id: string; file: File; name: string }
  * Pick files → optionally rename each → start. Uploads then run in the
  * background queue, so the user can leave right away.
  */
-export function MediaUpload() {
+export function MediaUpload({
+    onStarted,
+    showQueue = true,
+}: {
+    /** Called after files join the queue (the dialog closes itself here). */
+    onStarted?: () => void
+    /** The page lists uploads below; the dialog leaves that to the header indicator. */
+    showQueue?: boolean
+} = {}) {
     const { enqueue, items } = useUploads()
     const [staged, setStaged] = useState<Staged[]>([])
 
@@ -35,6 +43,7 @@ export function MediaUpload() {
             description: 'You can keep using Fannout while they finish.',
         })
         setStaged([])
+        onStarted?.()
     }
 
     return (
@@ -99,7 +108,7 @@ export function MediaUpload() {
                 </section>
             ) : null}
 
-            {items.length > 0 ? (
+            {showQueue && items.length > 0 ? (
                 <section className="flex flex-col gap-4" aria-labelledby="uploads-heading">
                     <h2 id="uploads-heading" className="text-section-title text-foreground">
                         Uploads

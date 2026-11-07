@@ -1,11 +1,14 @@
 'use client'
 
-import { FolderPlusIcon, ImagesIcon, SearchIcon, UploadIcon, XIcon } from 'lucide-react'
+import { FolderPlusIcon, ImagesIcon, SearchIcon, XIcon } from 'lucide-react'
 import Link from 'next/link'
 import { useMemo, useState } from 'react'
 
+import { UploadButton } from '~/components/uploads/upload-dialog'
+
 import type { RouterOutputs } from '@repo/trpc/client'
-import { Alert, AlertDescription, AlertTitle } from '~/components/ui/alert'
+import { InfiniteList } from '~/components/infinite-list'
+import { CardMenu, cardMenuSlot, useDeleteMedia, useIsDeleting } from '~/components/library/delete-actions'
 import { Button } from '~/components/ui/button'
 import { Checkbox } from '~/components/ui/checkbox'
 import { EmptyState } from '~/components/ui/empty-state'
@@ -19,11 +22,9 @@ import {
     SelectValue,
 } from '~/components/ui/select'
 import { Skeleton } from '~/components/ui/skeleton'
-import { Spinner } from '~/components/ui/spinner'
 import { StatusBadge } from '~/components/ui/status-badge'
 import { useDebouncedValue } from '~/hooks/use-debounced-value'
-import { useInfiniteScroll } from '~/hooks/use-infinite-scroll'
-import { normalizeTRPCError } from '~/lib/error'
+import { infiniteOptions, useInfiniteList } from '~/hooks/use-infinite-list'
 import { formatDuration } from '~/lib/media-format'
 import { ORIENTATION_LABEL, TYPE_LABEL, type MediaType, type Orientation } from '~/lib/media-roles'
 import { cn } from '~/lib/utils'
@@ -36,23 +37,33 @@ import { MediaPreview } from './media-preview'
 
 type Media = RouterOutputs['media']['list']['items'][number]
 
-const PAGE_SIZE = 24
 const ALL = 'all'
 
 function MediaTile({
     item,
     selected,
     onToggle,
+    onDelete,
 }: {
     item: Media
     selected: boolean
     onToggle: (checked: boolean) => void
+    onDelete: () => void
 }) {
+    const deleting = useIsDeleting(item.id)
     return (
         <li
+            // Delete on a focused card opens the same confirm dialog.
+            onKeyDown={(event) => {
+                if (event.key === 'Delete' && !deleting) {
+                    event.preventDefault()
+                    onDelete()
+                }
+            }}
             className={cn(
-                'relative flex flex-col overflow-hidden rounded-surface border bg-card transition-colors duration-fast ease-out',
-                selected ? 'border-primary' : 'border-border hover:border-primary'
+                'group relative flex flex-col overflow-hidden rounded-surface border bg-card transition-[border-color,opacity] duration-fast ease-out motion-reduce:transition-none',
+                selected ? 'border-primary' : 'border-border hover:border-primary',
+                deleting && 'pointer-events-none opacity-0'
             )}
         >
             <Link
@@ -62,6 +73,9 @@ function MediaTile({
             >
                 <MediaPreview type={item.type} url={item.url} alt={item.name} />
             </Link>
+            <span className={cardMenuSlot}>
+                <CardMenu label={item.name} disabled={deleting} onDelete={onDelete} />
+            </span>
             <span className="absolute top-2 start-2 flex rounded-control bg-popover p-1 shadow-float">
                 <Checkbox
                     checked={selected}
@@ -86,19 +100,7 @@ function MediaTile({
     )
 }
 
-export function UploadButton() {
-    return (
-        <Button
-            variant="primary"
-            size="md"
-            nativeButton={false}
-            leftIcon={<UploadIcon aria-hidden />}
-            render={<Link href="/media/upload" />}
-        >
-            Upload
-        </Button>
-    )
-}
+export { UploadButton } from '~/components/uploads/upload-dialog'
 
 function FilterSelect<T extends string>({
     label,
@@ -139,20 +141,16 @@ export function MediaLibrary() {
     const [selected, setSelected] = useState<Map<string, PickedMedia>>(new Map())
     const [dialogOpen, setDialogOpen] = useState(false)
 
-    const list = trpc.media.list.useInfiniteQuery(
+    const mediaQuery = trpc.media.list.useInfiniteQuery(
         {
-            limit: PAGE_SIZE,
             ...(q ? { q } : {}),
             ...(type !== ALL ? { type } : {}),
             ...(orientation !== ALL ? { orientation } : {}),
         },
-        { staleTime: 0, getNextPageParam: (last) => last.nextCursor ?? undefined }
+        infiniteOptions({ staleTime: 0 })
     )
-    const sentinel = useInfiniteScroll({
-        hasMore: Boolean(list.hasNextPage),
-        loading: list.isFetchingNextPage,
-        onLoadMore: () => void list.fetchNextPage(),
-    })
+    const list = useInfiniteList(mediaQuery)
+    const deleteMedia = useDeleteMedia()
 
     const toggle = (item: Media, checked: boolean) =>
         setSelected((current) => {
@@ -170,7 +168,6 @@ export function MediaLibrary() {
         })
     const picked = useMemo(() => [...selected.values()], [selected])
     const filtered = Boolean(q) || type !== ALL || orientation !== ALL
-    const items = list.data?.pages.flatMap((page) => page.items) ?? []
 
     return (
         <div className="flex flex-col gap-4">
@@ -204,51 +201,39 @@ export function MediaLibrary() {
                 ) : null}
             </div>
 
-            {list.isPending ? (
-                <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4" aria-busy>
-                    {Array.from({ length: 8 }, (_, i) => (
-                        <li key={i} className="flex flex-col gap-2">
-                            <Skeleton className="aspect-video w-full rounded-surface" />
-                            <Skeleton className="h-4 w-2/3" />
-                        </li>
-                    ))}
-                </ul>
-            ) : list.isError ? (
-                <Alert variant="destructive">
-                    <AlertTitle>Could not load your media</AlertTitle>
-                    <AlertDescription>{normalizeTRPCError(list.error).message}</AlertDescription>
-                </Alert>
-            ) : items.length === 0 ? (
-                filtered ? (
-                    <EmptyState icon={SearchIcon} title="No matches" description="Try another name or clear the filters." />
-                ) : (
-                    <EmptyState
-                        icon={ImagesIcon}
-                        title="No media yet"
-                        description="Upload videos, images, subtitles and social JSON to organise them into folders."
-                        actions={<UploadButton />}
+            <InfiniteList
+                list={list}
+                getKey={(item) => item.id}
+                className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
+                skeletonCount={8}
+                skeleton={
+                    <div className="flex flex-col gap-2">
+                        <Skeleton className="aspect-video w-full rounded-surface" />
+                        <Skeleton className="h-4 w-2/3" />
+                    </div>
+                }
+                empty={
+                    filtered ? (
+                        <EmptyState icon={SearchIcon} title="No matches" description="Try another name or clear the filters." />
+                    ) : (
+                        <EmptyState
+                            icon={ImagesIcon}
+                            title="No media yet"
+                            description="Upload videos, images, subtitles and social JSON to organise them into folders."
+                            actions={<UploadButton />}
+                        />
+                    )
+                }
+                renderItem={(item) => (
+                    <MediaTile
+                        item={item}
+                        selected={selected.has(item.id)}
+                        onToggle={(checked) => toggle(item, checked)}
+                        onDelete={() => deleteMedia.request({ id: item.id, name: item.name })}
                     />
-                )
-            ) : (
-                <>
-                    <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                        {items.map((item) => (
-                            <MediaTile
-                                key={item.id}
-                                item={item}
-                                selected={selected.has(item.id)}
-                                onToggle={(checked) => toggle(item, checked)}
-                            />
-                        ))}
-                    </ul>
-                    <div ref={sentinel} aria-hidden className="h-1" />
-                    {list.isFetchingNextPage ? (
-                        <div className="flex justify-center">
-                            <Spinner />
-                        </div>
-                    ) : null}
-                </>
-            )}
+                )}
+            />
+            {deleteMedia.dialog}
             <AddToFolderDialog
                 media={picked}
                 open={dialogOpen}

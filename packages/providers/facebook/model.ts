@@ -1,7 +1,8 @@
 import { z } from "zod";
+import { composeField, type ComposeCapabilities } from "../common/compose";
 import { MediaSourceSchema } from "../common/media";
 import { graphCursorFields, graphListSchema, NO_BEFORE_AND_AFTER, noBeforeAndAfter } from "../common/meta-graph";
-import { FACEBOOK_CHILD_ATTACHMENTS, FACEBOOK_FEED_LIMIT_MAX } from "./constants";
+import { FACEBOOK_ATTACHED_MEDIA_MAX, FACEBOOK_CHILD_ATTACHMENTS, FACEBOOK_FEED_LIMIT_MAX } from "./constants";
 
 /*
  * Zod schemas for the Facebook Pages APIs (Graph API): Page, Page feed,
@@ -100,6 +101,8 @@ export const CreatePostInputSchema = z
     description: z.string().optional(),
     picture: z.url().optional(),
     object_attachment: GraphNodeIdSchema.optional(),
+    /** Multi-photo post: ids of photos uploaded with published=false. */
+    attached_media: z.array(z.object({ media_fbid: GraphNodeIdSchema })).min(1).max(FACEBOOK_ATTACHED_MEDIA_MAX).optional(),
     place: GraphNodeIdSchema.optional(),
     /** User IDs tagged; requires `place`. */
     tags: z.array(GraphNodeIdSchema).min(1).optional(),
@@ -119,7 +122,10 @@ export const CreatePostInputSchema = z
     og_object_id: z.string().optional(),
     og_icon_id: z.string().optional(),
   })
-  .refine((v) => v.message !== undefined || v.link !== undefined, { message: "message or link is required", path: ["message"] })
+  .refine((v) => v.message !== undefined || v.link !== undefined || v.attached_media !== undefined, {
+    message: "message or link is required (or attached_media for a photo post)",
+    path: ["message"],
+  })
   .refine((v) => !v.tags || v.place, { message: "tags requires place", path: ["tags"] })
   .refine((v) => v.scheduled_publish_time === undefined || v.published === false, {
     message: "scheduled_publish_time requires published=false",
@@ -476,3 +482,53 @@ export const PageWebhookPayloadSchema = z.looseObject({
   ),
 });
 export type PageWebhookPayload = z.infer<typeof PageWebhookPayloadSchema>;
+
+// ---------------------------------------------------------------------------
+// Compose (Fannout composer). Single source for the UI fields and validation.
+// ---------------------------------------------------------------------------
+
+
+export const FACEBOOK_MESSAGE_MAX = 63_206;
+
+export const FACEBOOK_COMPOSE: ComposeCapabilities = {
+  supportsVideo: true,
+  supportsPhotos: true,
+  maxPhotos: FACEBOOK_ATTACHED_MEDIA_MAX,
+  minCarousel: 1,
+  supportsThumbnail: false,
+  mediaRules: { maxVideoBytes: 10 * 1024 * 1024 * 1024, maxVideoSeconds: 240 * 60, maxImageBytes: 10 * 1024 * 1024 },
+  // POST/DELETE /{page_post_id} with the Page token — https://developers.facebook.com/docs/pages-api/posts
+  supportsDelete: true,
+  deleteNote: "Deletes the post from your Page.",
+  supportsEdit: true,
+  editableFields: ["message"],
+  editNote: "Only the post text can be edited, and only for posts made with Fannout.",
+};
+
+export const FacebookComposeInputSchema = z.object({
+  message: composeField(z.string().max(FACEBOOK_MESSAGE_MAX).optional(), {
+    label: "Post text", description: "Post message, or the video description for videos.",
+    kind: "textarea",
+    countMode: "chars",
+    maxLength: FACEBOOK_MESSAGE_MAX,
+    ai: true,
+  }),
+  title: composeField(z.string().max(255).optional(), {
+    label: "Video title", description: "Video title (max 255 characters).",
+    kind: "text",
+    countMode: "chars",
+    maxLength: 255,
+    mediaType: "video",
+    ai: true,
+  }),
+  content_category: composeField(VideoContentCategorySchema.optional(), {
+    label: "Video category", description: "Facebook video content category.",
+    kind: "select",
+    mediaType: "video",
+    options: VideoContentCategorySchema.options.map((value) => ({
+      value,
+      label: value.toLowerCase().replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase()),
+    })),
+  }),
+});
+export type FacebookComposeInput = z.infer<typeof FacebookComposeInputSchema>;

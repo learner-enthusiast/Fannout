@@ -12,6 +12,7 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
+    "@repo/bullmq": "workspace:*",
     "@repo/logger": "workspace:^",
     "@repo/s3": "workspace:*",
     "@repo/services": "workspace:*",

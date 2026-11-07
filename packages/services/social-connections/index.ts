@@ -1,6 +1,7 @@
 import { and, db, desc, eq, socialConnections } from "@repo/database";
 import { errors } from "@repo/errors";
 import { z } from "zod";
+import { afterCursor, cursorTimestamp, PaginationInputSchema, toPage } from "../common/pagination";
 import {
   ListSocialConnectionsInputSchema,
   SocialConnectionRowSchema,
@@ -163,4 +164,31 @@ export function toSocialConnectionView(
     status = "reconnect";
   }
   return SocialConnectionViewSchema.parse({ ...row, status });
+}
+
+/** Connections newest first, 10 per page (created_at DESC, id DESC). */
+export async function listSocialConnectionsPage(
+  userId: string,
+  input: { cursor?: string | null; limit?: number; provider?: string } = {},
+) {
+  const { cursor, limit } = PaginationInputSchema.parse(input);
+  const provider = input.provider;
+  const rows = await db
+    .select({ row: socialConnections, cursorTs: cursorTimestamp(socialConnections.createdAt) })
+    .from(socialConnections)
+    .where(
+      and(
+        eq(socialConnections.userId, UuidSchema.parse(userId)),
+        provider ? eq(socialConnections.provider, provider) : undefined,
+        afterCursor(socialConnections.createdAt, socialConnections.id, cursor ?? undefined),
+      ),
+    )
+    .orderBy(desc(socialConnections.createdAt), desc(socialConnections.id))
+    .limit(limit + 1);
+  const page = toPage(rows.map(({ row, cursorTs }) => ({ id: row.id, cursorTs, row })), limit);
+  const now = new Date();
+  return {
+    items: page.items.map((item) => toSocialConnectionView(SocialConnectionRowSchema.parse(item.row), now)),
+    nextCursor: page.nextCursor,
+  };
 }

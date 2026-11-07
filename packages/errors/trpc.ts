@@ -9,6 +9,8 @@ const trpcCodeMap: Record<ErrorCode, TRPCError["code"]> = {
   [ErrorCode.CONFLICT]: "CONFLICT",
   [ErrorCode.VALIDATION]: "BAD_REQUEST",
   [ErrorCode.BAD_REQUEST]: "BAD_REQUEST",
+  [ErrorCode.TOO_MANY_REQUESTS]: "TOO_MANY_REQUESTS",
+  [ErrorCode.MEDIA_IN_USE]: "CONFLICT",
   [ErrorCode.INTERNAL]: "INTERNAL_SERVER_ERROR",
 };
 

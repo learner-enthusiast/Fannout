@@ -312,7 +312,7 @@ function setup(options: { configured?: Partial<Record<OAuthProviderSlug, boolean
       ? { ...credentials(slug, scopes), clientId: undefined, clientSecret: undefined }
       : credentials(slug, scopes);
   const providers = createProviderRegistry({
-    linkedin: cfg("linkedin", "openid profile email"),
+    linkedin: cfg("linkedin", "openid profile email w_member_social"),
     x: cfg("x", "tweet.read users.read offline.access"),
     youtube: cfg(
       "youtube",
@@ -474,7 +474,7 @@ describe("OAuth initiation", () => {
     assert.equal(x.nonce, null);
     const linkedin = await start(env, "linkedin");
     assert.equal(linkedin.url.searchParams.get("code_challenge"), null);
-    assert.equal(linkedin.url.searchParams.get("scope"), "openid profile email");
+    assert.equal(linkedin.url.searchParams.get("scope"), "openid profile email w_member_social");
   });
 
   test("rejects unconfigured providers and unsafe returnTo values", async () => {
@@ -718,7 +718,7 @@ describe("OAuth callback: providers", () => {
         access_token: "li-access",
         expires_in: 5183999,
         token_type: "Bearer",
-        scope: "email,openid,profile",
+        scope: "email,openid,profile,w_member_social",
         id_token: idToken(env, {
           iss: "https://www.linkedin.com/oauth",
           aud: "linkedin-client-id",

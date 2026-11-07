@@ -22,10 +22,10 @@ import {
     PopoverTrigger,
 } from '~/components/ui/popover'
 import { Skeleton } from '~/components/ui/skeleton'
-import { Spinner } from '~/components/ui/spinner'
-import { useInfiniteScroll } from '~/hooks/use-infinite-scroll'
 import { cn } from '~/lib/utils'
 import { trpc } from '~/trpc/client'
+import { InfiniteList } from '~/components/infinite-list'
+import { infiniteOptions, useInfiniteList } from '~/hooks/use-infinite-list'
 
 type Notification = RouterOutputs['notifications']['list']['items'][number]
 
@@ -36,9 +36,12 @@ const tone: Record<Notification['type'], { icon: LucideIcon; className: string; 
     upload_failed: { icon: CircleAlertIcon, className: 'text-destructive', label: 'Failed' },
     post_failed: { icon: CircleAlertIcon, className: 'text-destructive', label: 'Failed' },
     schedule_failed: { icon: TriangleAlertIcon, className: 'text-warning', label: 'Needs attention' },
+    schedule_missed: { icon: TriangleAlertIcon, className: 'text-warning', label: 'Missed' },
+    post_deleted: { icon: CircleCheckIcon, className: 'text-success', label: 'Deleted' },
+    post_delete_failed: { icon: CircleAlertIcon, className: 'text-destructive', label: 'Failed' },
+    post_edited: { icon: CircleCheckIcon, className: 'text-success', label: 'Edited' },
+    post_edit_failed: { icon: CircleAlertIcon, className: 'text-destructive', label: 'Failed' },
 }
-
-const PAGE_SIZE = 20
 
 function NotificationRow({
     item,
@@ -88,14 +91,8 @@ export function NotificationBell() {
         refetchOnWindowFocus: true,
         staleTime: 0,
     })
-    const list = trpc.notifications.list.useInfiniteQuery(
-        { limit: PAGE_SIZE },
-        {
-            enabled: open,
-            staleTime: 0,
-            getNextPageParam: (last) => last.nextCursor ?? undefined,
-        }
-    )
+    const notificationsQuery = trpc.notifications.list.useInfiniteQuery({}, infiniteOptions({ enabled: open, staleTime: 0 }))
+    const list = useInfiniteList(notificationsQuery)
 
     const refresh = () => {
         void utils.notifications.unreadCount.invalidate()
@@ -104,15 +101,8 @@ export function NotificationBell() {
     const markRead = trpc.notifications.markRead.useMutation({ onSettled: refresh })
     const markAll = trpc.notifications.markAllRead.useMutation({ onSettled: refresh })
 
-    const sentinel = useInfiniteScroll({
-        hasMore: Boolean(list.hasNextPage),
-        loading: list.isFetchingNextPage,
-        onLoadMore: () => void list.fetchNextPage(),
-        root: scrollRoot,
-    })
 
     const count = unread.data?.count ?? 0
-    const items = list.data?.pages.flatMap((page) => page.items) ?? []
 
     const openItem = (item: Notification) => {
         if (!item.readAt) markRead.mutate({ ids: [item.id] })
@@ -155,33 +145,24 @@ export function NotificationBell() {
                     </div>
                 </PopoverHeader>
                 <div ref={setScrollRoot} className="max-h-120 overflow-y-auto">
-                    {list.isPending ? (
-                        <ul className="flex flex-col gap-2 p-2" aria-busy>
-                            {[0, 1, 2].map((i) => (
-                                <li key={i} className="flex gap-3">
-                                    <Skeleton className="size-4 rounded-full" />
-                                    <div className="flex flex-1 flex-col gap-2">
-                                        <Skeleton className="h-4 w-2/3" />
-                                        <Skeleton className="h-3 w-1/3" />
-                                    </div>
-                                </li>
-                            ))}
-                        </ul>
-                    ) : items.length === 0 ? (
-                        <p className="px-2 py-8 text-center text-meta">You&rsquo;re all caught up.</p>
-                    ) : (
-                        <ul className="flex flex-col">
-                            {items.map((item) => (
-                                <NotificationRow key={item.id} item={item} onOpen={openItem} />
-                            ))}
-                        </ul>
-                    )}
-                    <div ref={sentinel} aria-hidden className="h-1" />
-                    {list.isFetchingNextPage ? (
-                        <div className="flex justify-center py-2">
-                            <Spinner />
-                        </div>
-                    ) : null}
+                    <InfiniteList
+                        list={list}
+                        root={scrollRoot}
+                        getKey={(item) => item.id}
+                        className="flex flex-col"
+                        endLabel=""
+                        skeleton={
+                            <div className="flex gap-3 p-2">
+                                <Skeleton className="size-4 rounded-full" />
+                                <div className="flex flex-1 flex-col gap-2">
+                                    <Skeleton className="h-4 w-2/3" />
+                                    <Skeleton className="h-3 w-1/3" />
+                                </div>
+                            </div>
+                        }
+                        empty={<p className="px-2 py-8 text-center text-meta">You&rsquo;re all caught up.</p>}
+                        renderItem={(item) => <NotificationRow item={item} onOpen={openItem} />}
+                    />
                 </div>
             </PopoverContent>
         </Popover>

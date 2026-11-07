@@ -17,7 +17,8 @@
     },
     "lint": {
       "dependsOn": [
-        "^lint"
+        "^lint",
+        "docs:agent:check"
       ]
     },
     "check-types": {
@@ -34,6 +35,9 @@
     "test": {},
     "db:reset": {
       "cache": false
+    },
+    "docs:agent:check": {
+      "cache": false
     }
   },
   "globalEnv": [
@@ -42,6 +46,12 @@
     "SKIP_ENV_VALIDATION",
     "BASE_URL",
     "WEB_URL",
-    "FFPROBE_PATH"
+    "FFPROBE_PATH",
+    "OPENAI_API_KEY",
+    "OPENAI_MODEL",
+    "AI_LOG_PROMPTS",
+    "LINKEDIN_USE_COMMUNITY_API",
+    "API_KEY_PEPPER",
+    "RATE_LIMIT_ENABLED"
   ]
 }

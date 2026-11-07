@@ -256,6 +256,20 @@ export class FacebookProvider extends BaseProvider<FacebookProviderConfig> {
     return this.del(E.node(this.validate(PagePostIdSchema, postId, "deletePost")));
   }
 
+  /**
+   * DELETE /{video-id} — for video posts where only the video id is known.
+   * (Graph video node; the Pages posts guide covers /{page_post_id} only.)
+   */
+  async deleteVideo(videoId: string): Promise<boolean> {
+    return this.del(E.node(this.validate(GraphNodeIdSchema, videoId, "deleteVideo")));
+  }
+
+  /** POST /{video-id} with a new description (video node). */
+  async updateVideoDescription(videoId: string, description: string): Promise<boolean> {
+    const id = this.validate(GraphNodeIdSchema, videoId, "updateVideoDescription");
+    return (await this.post(E.node(id), { description }, GraphSuccessSchema)).success;
+  }
+
   // ================= photos =================
 
   /** POST /{page-id}/photos — `url` sources by URL, otherwise multipart `source`. */

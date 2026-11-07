@@ -9,10 +9,12 @@ import {
   media,
   mediaFolderItems,
   mediaFolders,
+  sql,
 } from "@repo/database";
 import { errors } from "@repo/errors";
 import { z } from "zod";
 import { afterCursor, cursorTimestamp, toPage } from "../lib/cursor";
+import { decodeKeyCursor, toKeyPage } from "../common/pagination";
 import { isUniqueViolation } from "../lib/pg-errors";
 import { MediaRowSchema, type MediaRow } from "../media/model";
 import { nameMatches, presignedUrl } from "../media/views";
@@ -20,6 +22,7 @@ import {
   AddItemsInputSchema,
   CreateFolderInputSchema,
   FOLDER_ROLES,
+  FolderItemsInputSchema,
   FromSuggestionInputSchema,
   ListFoldersInputSchema,
   ReorderInputSchema,
@@ -27,6 +30,7 @@ import {
   UpdateFolderInputSchema,
   UpdateItemInputSchema,
   type FolderDetail,
+  type FolderItemsInput,
   type FolderItemView,
   type FolderRole,
   type FolderSummary,
@@ -176,8 +180,10 @@ export async function updateFolder(userId: string, input: z.input<typeof UpdateF
 
 /** Deletes the folder and its links only — the media stays in the library. */
 export async function deleteFolder(userId: string, folderId: string): Promise<void> {
-  await ownedFolder(db, userId, folderId);
-  await db.delete(mediaFolders).where(eq(mediaFolders.id, folderId));
+  // Idempotent: already gone (or not yours) → nothing to do. Media is never deleted.
+  await db
+    .delete(mediaFolders)
+    .where(and(eq(mediaFolders.id, UuidSchema.parse(folderId)), eq(mediaFolders.userId, UuidSchema.parse(userId))));
 }
 
 /** Cover URL per folder: the explicit cover, else the primary thumbnail. */
@@ -281,20 +287,49 @@ async function toItemView(link: Link, row: MediaRow): Promise<FolderItemView> {
 
 export async function getFolder(userId: string, folderId: string): Promise<FolderDetail> {
   const folder = await ownedFolder(db, userId, folderId);
-  const rows = await db
-    .select({ link: mediaFolderItems, row: media })
+  const counts = await db
+    .select({ role: mediaFolderItems.role, value: count() })
     .from(mediaFolderItems)
-    .innerJoin(media, eq(media.id, mediaFolderItems.mediaId))
-    .where(eq(mediaFolderItems.folderId, folder.id));
-  const order = (role: string) => FOLDER_ROLES.indexOf(role as FolderRole);
-  const sorted = rows.sort(
-    (a, b) => order(a.link.role) - order(b.link.role) || a.link.position - b.link.position,
-  );
+    .where(eq(mediaFolderItems.folderId, folder.id))
+    .groupBy(mediaFolderItems.role);
   const [summary] = await toFolderSummaries([folder]);
   return {
     ...summary!,
     coverMediaId: folder.coverMediaId,
-    items: await Promise.all(sorted.map(({ link, row }) => toItemView(link as Link, MediaRowSchema.parse(row)))),
+    roleCounts: Object.fromEntries(counts.map((c) => [c.role, c.value])),
+  };
+}
+
+/** Role rank as SQL (FOLDER_ROLES order), for sorting + the cursor. */
+const roleRank = sql<number>`array_position(${sql.raw(`ARRAY[${FOLDER_ROLES.map((r) => `'${r}'`).join(",")}]::text[]`)}, ${mediaFolderItems.role})`;
+
+/** Items of a folder, 10 at a time: role → position → id (sortKey = "rank:position"). */
+export async function listFolderItems(userId: string, input: FolderItemsInput) {
+  const { folderId, role, cursor, limit } = FolderItemsInputSchema.parse(input);
+  const folder = await ownedFolder(db, userId, folderId);
+  const after = cursor ? decodeKeyCursor(cursor) : null;
+  const [afterRank, afterPosition] = after ? after.sortKey.split(":").map(Number) : [0, 0];
+
+  const rows = await db
+    .select({ link: mediaFolderItems, row: media, rank: roleRank })
+    .from(mediaFolderItems)
+    .innerJoin(media, eq(media.id, mediaFolderItems.mediaId))
+    .where(
+      and(
+        eq(mediaFolderItems.folderId, folder.id),
+        role ? eq(mediaFolderItems.role, role) : undefined,
+        after
+          ? sql`(${roleRank}, ${mediaFolderItems.position}, ${mediaFolderItems.mediaId}) > (${afterRank}, ${afterPosition}, ${after.id}::uuid)`
+          : undefined,
+      ),
+    )
+    .orderBy(roleRank, asc(mediaFolderItems.position), asc(mediaFolderItems.mediaId))
+    .limit(limit + 1);
+
+  const page = toKeyPage(rows, limit, (r) => ({ sortKey: `${r.rank}:${r.link.position}`, id: r.link.mediaId }));
+  return {
+    items: await Promise.all(page.items.map(({ link, row }) => toItemView(link as Link, MediaRowSchema.parse(row)))),
+    nextCursor: page.nextCursor,
   };
 }
 

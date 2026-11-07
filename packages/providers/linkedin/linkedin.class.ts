@@ -7,6 +7,7 @@ import { ProviderError } from "../common/provider-error";
 import type { BaseProviderConfig, ProviderAccount } from "../common/provider.types";
 import {
   LINKEDIN_API_BASE_URL,
+  LINKEDIN_V2_BASE_URL,
   LINKEDIN_DEFAULT_VERSION,
   LINKEDIN_DOCUMENT_MAX_BYTES,
   LINKEDIN_RESTLI_PROTOCOL_VERSION,
@@ -122,6 +123,17 @@ import {
   type UploadDocumentInput,
   type UploadImageInput,
   type UploadVideoInput,
+  CreateUgcPostInputSchema,
+  DigitalMediaAssetUrnSchema,
+  RegisterUploadInputSchema,
+  RegisterUploadRequestSchema,
+  RegisterUploadResponseSchema,
+  UgcAssetSchema,
+  UgcPostBodySchema,
+  UgcPostUrnSchema,
+  type CreateUgcPostInput,
+  type RegisterUploadInput,
+  type UgcAsset,
 } from "./model";
 
 export interface LinkedInProviderConfig extends BaseProviderConfig {
@@ -442,6 +454,129 @@ export class LinkedInProvider extends BaseProvider<LinkedInProviderConfig> {
     const init = await this.initializeImageUpload({ owner: v.owner, mediaLibraryMetadata: v.mediaLibraryMetadata });
     await this.uploadToUrl(init.uploadUrl, v.source);
     return { image: init.image };
+  }
+
+  // ================= Share on LinkedIn (UGC, /v2) =================
+
+  /** Headers for every /v2 call (Rest.li 2.0). */
+  private readonly v2Headers = { "x-restli-protocol-version": LINKEDIN_RESTLI_PROTOCOL_VERSION };
+
+  /**
+   * POST /v2/assets?action=registerUpload — feedshare-image / feedshare-video
+   * recipe owned by the member. Returns the upload URL (+headers) and asset URN.
+   */
+  async registerUpload(input: RegisterUploadInput) {
+    const v = this.validate(RegisterUploadInputSchema, input, "registerUpload");
+    const body = RegisterUploadRequestSchema.parse({
+      registerUploadRequest: {
+        recipes: [v.kind === "video" ? "urn:li:digitalmediaRecipe:feedshare-video" : "urn:li:digitalmediaRecipe:feedshare-image"],
+        owner: v.owner,
+        serviceRelationships: [{ relationshipType: "OWNER", identifier: "urn:li:userGeneratedContent" }],
+      },
+    });
+    const { data } = await this.http.json(
+      {
+        method: "POST",
+        url: `${LINKEDIN_V2_BASE_URL}/assets`,
+        query: { action: "registerUpload" },
+        headers: this.v2Headers,
+        body: { kind: "json", value: body },
+      },
+      RegisterUploadResponseSchema,
+    );
+    const mechanism = data.value.uploadMechanism["com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest"];
+    return { uploadUrl: mechanism.uploadUrl, headers: mechanism.headers ?? {}, asset: data.value.asset };
+  }
+
+  /** Upload the binary to the registerUpload URL (bearer auth + any headers LinkedIn returned). */
+  async uploadAssetBinary(uploadUrl: string, source: MediaSource, headers: Record<string, string> = {}): Promise<void> {
+    const url = this.validate(z.url(), uploadUrl, "uploadAssetBinary");
+    const stream = await openMediaStream(source, this.config.fetch);
+    const bytes = await readAll(stream);
+    await this.http.send({
+      method: "PUT",
+      url,
+      headers,
+      body: { kind: "binary", value: bytes, contentType: stream.mimeType },
+      retry: true,
+    });
+  }
+
+  /** GET /v2/assets/{id} — processing status of an uploaded asset. */
+  async getAsset(assetUrn: string): Promise<UgcAsset> {
+    const urn = this.validate(DigitalMediaAssetUrnSchema, assetUrn, "getAsset");
+    const id = urn.slice("urn:li:digitalmediaAsset:".length);
+    return this.get({ url: `${LINKEDIN_V2_BASE_URL}/assets/${encodeURIComponent(id)}`, headers: this.v2Headers }, UgcAssetSchema);
+  }
+
+  /** Polls getAsset until every recipe is AVAILABLE; throws on a processing error or timeout. */
+  async waitForAsset(assetUrn: string, options: { timeoutMs?: number; intervalMs?: number } = {}): Promise<UgcAsset> {
+    const timeoutMs = options.timeoutMs ?? 10 * 60 * 1000;
+    const intervalMs = options.intervalMs ?? 5000;
+    const sleep = this.config.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const asset = await this.getAsset(assetUrn);
+      const statuses = asset.recipes.map((r) => r.status);
+      if (statuses.length > 0 && statuses.every((s) => s === "AVAILABLE")) return asset;
+      if (statuses.some((s) => s === "CLIENT_ERROR" || s === "PROCESSING_FAILED")) {
+        throw new ProviderError({ provider: this.name, code: "BAD_REQUEST", message: `LinkedIn couldn't process the upload (${statuses.join(", ")})` });
+      }
+      if (Date.now() > deadline) {
+        throw new ProviderError({ provider: this.name, code: "TIMEOUT", message: "LinkedIn is still processing the upload", retryable: true });
+      }
+      await sleep(intervalMs);
+    }
+  }
+
+  /** registerUpload + binary upload; returns the asset URN for a UGC post. */
+  async uploadUgcAsset(input: RegisterUploadInput & { source: MediaSource }): Promise<{ asset: string }> {
+    const { source, ...rest } = input;
+    const registered = await this.registerUpload(rest);
+    await this.uploadAssetBinary(registered.uploadUrl, source, registered.headers);
+    return { asset: registered.asset };
+  }
+
+  /** POST /v2/ugcPosts — text, article, image(s) or video share as the member. Id from x-restli-id. */
+  async createUgcPost(input: CreateUgcPostInput): Promise<CreatedEntity> {
+    const v = this.validate(CreateUgcPostInputSchema, input, "createUgcPost");
+    const body = UgcPostBodySchema.parse({
+      author: v.author,
+      lifecycleState: "PUBLISHED",
+      specificContent: {
+        "com.linkedin.ugc.ShareContent": {
+          shareCommentary: { text: v.commentary },
+          shareMediaCategory: v.mediaCategory,
+          ...(v.media?.length
+            ? {
+                media: v.media.map((m) => ({
+                  status: "READY" as const,
+                  ...(m.asset ? { media: m.asset } : {}),
+                  ...(m.originalUrl ? { originalUrl: m.originalUrl } : {}),
+                  ...(m.title ? { title: { text: m.title } } : {}),
+                  ...(m.description ? { description: { text: m.description } } : {}),
+                })),
+              }
+            : {}),
+        },
+      },
+      visibility: { "com.linkedin.ugc.MemberNetworkVisibility": v.visibility },
+    });
+    return this.createdId({
+      method: "POST",
+      url: `${LINKEDIN_V2_BASE_URL}/ugcPosts`,
+      headers: this.v2Headers,
+      body: { kind: "json", value: body },
+    });
+  }
+
+  /**
+   * DELETE /v2/ugcPosts/{encoded urn} — idempotent (204 for an already-deleted post).
+   * https://learn.microsoft.com/en-us/linkedin/compliance/integrations/shares/ugc-post-api
+   */
+  async deleteUgcPost(postUrn: string): Promise<void> {
+    const urn = this.validate(UgcPostUrnSchema, postUrn, "deleteUgcPost");
+    await this.http.send({ method: "DELETE", url: `${LINKEDIN_V2_BASE_URL}/ugcPosts/${encodeURIComponent(urn)}`, headers: this.v2Headers });
   }
 
   /** GET /rest/images/{urn} (needs read permission; w_member_social alone is write-only). */

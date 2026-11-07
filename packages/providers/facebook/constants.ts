@@ -25,3 +25,6 @@ export const FACEBOOK_SCOPES = {
   readInsights: "read_insights",
   publishVideo: "publish_video",
 } as const;
+
+/** Photos per multi-photo Page post (attached_media). */
+export const FACEBOOK_ATTACHED_MEDIA_MAX = 10;

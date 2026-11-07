@@ -1,9 +1,12 @@
 import { z } from "zod";
+import { composeField, type ComposeCapabilities } from "../common/compose";
 import { MediaSourceSchema } from "../common/media";
 import {
   LINKEDIN_ALT_TEXT_MAX,
   LINKEDIN_MEDIA_FINDER_MAX_COUNT,
   LINKEDIN_MULTI_IMAGE,
+  LINKEDIN_UGC_MAX_IMAGES,
+  LINKEDIN_UGC_VIDEO_MAX_BYTES,
   LINKEDIN_POLL,
   LINKEDIN_POSTS_FINDER_MAX_COUNT,
   LINKEDIN_VIDEO_MAX_BYTES,
@@ -673,3 +676,176 @@ export const SetCommentsStateInputSchema = z.object({
   commentsState: z.enum(["OPEN", "CLOSED"]),
 });
 export type SetCommentsStateInput = z.input<typeof SetCommentsStateInputSchema>;
+
+// ---------------------------------------------------------------------------
+// Share on LinkedIn (UGC API, w_member_social) — member posts.
+// https://learn.microsoft.com/linkedin/consumer/integrations/self-serve/share-on-linkedin
+// ---------------------------------------------------------------------------
+
+export const DigitalMediaAssetUrnSchema = z.string().regex(/^urn:li:digitalmediaAsset:[^:]+$/, "Expected urn:li:digitalmediaAsset:{id}");
+export const UgcPostUrnSchema = z.string().regex(/^urn:li:(share|ugcPost):\d+$/, "Expected urn:li:share/ugcPost");
+
+export const UgcRecipeSchema = z.enum(["urn:li:digitalmediaRecipe:feedshare-image", "urn:li:digitalmediaRecipe:feedshare-video"]);
+
+/** POST /v2/assets?action=registerUpload */
+export const RegisterUploadInputSchema = z.object({
+  owner: PersonUrnSchema,
+  kind: z.enum(["image", "video"]),
+});
+export type RegisterUploadInput = z.input<typeof RegisterUploadInputSchema>;
+
+export const RegisterUploadRequestSchema = z.object({
+  registerUploadRequest: z.object({
+    recipes: z.array(UgcRecipeSchema).length(1),
+    owner: PersonUrnSchema,
+    serviceRelationships: z.array(
+      z.object({ relationshipType: z.literal("OWNER"), identifier: z.literal("urn:li:userGeneratedContent") }),
+    ),
+  }),
+});
+
+export const RegisterUploadResponseSchema = z.looseObject({
+  value: z.looseObject({
+    uploadMechanism: z.looseObject({
+      "com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest": z.looseObject({
+        uploadUrl: z.url(),
+        headers: z.record(z.string(), z.string()).optional(),
+      }),
+    }),
+    mediaArtifact: z.string().optional(),
+    asset: DigitalMediaAssetUrnSchema,
+  }),
+});
+export type RegisterUploadResponse = z.infer<typeof RegisterUploadResponseSchema>;
+
+/** GET /v2/assets/{id} — processing state per recipe. */
+export const UgcAssetStatusSchema = z.enum(["NEW", "PROCESSING", "AVAILABLE", "WAITING_UPLOAD", "CLIENT_ERROR", "PROCESSING_FAILED"]);
+export const UgcAssetSchema = z.looseObject({
+  id: z.string().optional(),
+  status: z.string().optional(),
+  recipes: z.array(z.looseObject({ recipe: z.string(), status: UgcAssetStatusSchema.or(z.string()) })).default([]),
+});
+export type UgcAsset = z.infer<typeof UgcAssetSchema>;
+
+export const UgcVisibilitySchema = z.enum(["PUBLIC", "CONNECTIONS"]);
+export const UgcShareMediaCategorySchema = z.enum(["NONE", "ARTICLE", "IMAGE", "VIDEO"]);
+
+const UgcTextSchema = z.object({ text: z.string() });
+
+export const UgcShareMediaSchema = z.object({
+  status: z.literal("READY"),
+  media: DigitalMediaAssetUrnSchema.optional(),
+  originalUrl: z.url().optional(),
+  title: UgcTextSchema.optional(),
+  description: UgcTextSchema.optional(),
+});
+
+/** POST /v2/ugcPosts body (exact wire shape). */
+export const UgcPostBodySchema = z.object({
+  author: PersonUrnSchema,
+  lifecycleState: z.literal("PUBLISHED"),
+  specificContent: z.object({
+    "com.linkedin.ugc.ShareContent": z.object({
+      shareCommentary: UgcTextSchema,
+      shareMediaCategory: UgcShareMediaCategorySchema,
+      media: z.array(UgcShareMediaSchema).max(LINKEDIN_UGC_MAX_IMAGES).optional(),
+    }),
+  }),
+  visibility: z.object({ "com.linkedin.ugc.MemberNetworkVisibility": UgcVisibilitySchema }),
+});
+export type UgcPostBody = z.infer<typeof UgcPostBodySchema>;
+
+/** Friendly input for createUgcPost. */
+export const CreateUgcPostInputSchema = z
+  .object({
+    author: PersonUrnSchema,
+    commentary: z.string().max(3000),
+    visibility: UgcVisibilitySchema.default("PUBLIC"),
+    mediaCategory: UgcShareMediaCategorySchema,
+    media: z
+      .array(
+        z.object({
+          asset: DigitalMediaAssetUrnSchema.optional(),
+          originalUrl: z.url().optional(),
+          title: z.string().max(200).optional(),
+          description: z.string().max(300).optional(),
+        }),
+      )
+      .max(LINKEDIN_UGC_MAX_IMAGES)
+      .optional(),
+  })
+  .refine((v) => (v.mediaCategory === "NONE") === !v.media?.length, {
+    message: "media is required for ARTICLE/IMAGE/VIDEO and not allowed for NONE",
+    path: ["media"],
+  })
+  .refine((v) => v.mediaCategory !== "VIDEO" || v.media?.length === 1, { message: "A video share has exactly one video", path: ["media"] });
+export type CreateUgcPostInput = z.input<typeof CreateUgcPostInputSchema>;
+
+// ---------------------------------------------------------------------------
+// Compose (Fannout composer). Single source for the UI fields and validation.
+// ---------------------------------------------------------------------------
+
+
+export const LINKEDIN_COMMENTARY_MAX = 3000;
+
+/**
+ * Capabilities with the Share on LinkedIn (UGC) API — the default. It has no
+ * custom video thumbnail, ≤9 images per post and single-request uploads.
+ */
+export const LINKEDIN_COMPOSE: ComposeCapabilities = {
+  supportsVideo: true,
+  supportsPhotos: true,
+  maxPhotos: LINKEDIN_UGC_MAX_IMAGES,
+  minCarousel: 1,
+  supportsThumbnail: false,
+  mediaRules: { maxVideoBytes: LINKEDIN_UGC_VIDEO_MAX_BYTES, minVideoSeconds: 3, maxVideoSeconds: 30 * 60 },
+  // DELETE /v2/ugcPosts/{urn} (idempotent; no update) — https://learn.microsoft.com/en-us/linkedin/compliance/integrations/shares/ugc-post-api
+  supportsDelete: true,
+  deleteNote: "Deletes the post from your LinkedIn profile.",
+  supportsEdit: false,
+  editableFields: [],
+  editNote: "Share on LinkedIn has no edit endpoint. Delete and repost instead.",
+};
+
+/** With LINKEDIN_USE_COMMUNITY_API=true (Community Management /rest/posts). */
+export const LINKEDIN_COMMUNITY_COMPOSE: ComposeCapabilities = {
+  supportsVideo: true,
+  supportsPhotos: true,
+  maxPhotos: LINKEDIN_MULTI_IMAGE.max,
+  minCarousel: 1,
+  supportsThumbnail: true,
+  mediaRules: { maxVideoBytes: LINKEDIN_VIDEO_MAX_BYTES, minVideoSeconds: 3, maxVideoSeconds: 30 * 60 },
+  supportsDelete: true,
+  deleteNote: "Deletes the post from your LinkedIn profile.",
+  supportsEdit: true,
+  editableFields: ["commentary"],
+  editNote: "Only the post text can be edited (Community Management API).",
+};
+
+export const LinkedInComposeInputSchema = z.object({
+  commentary: composeField(z.string().max(LINKEDIN_COMMENTARY_MAX, `Posts can be at most ${LINKEDIN_COMMENTARY_MAX} characters`).optional(), {
+    label: "Post text", description: "Post commentary (max 3,000 characters).",
+    kind: "textarea",
+    countMode: "chars",
+    maxLength: LINKEDIN_COMMENTARY_MAX,
+    ai: true,
+  }),
+  visibility: composeField(z.enum(["PUBLIC", "CONNECTIONS"]), {
+    label: "Visibility", description: "PUBLIC = anyone; CONNECTIONS = connections only (member posts).",
+    kind: "select",
+    defaultValue: "PUBLIC",
+    options: [
+      { value: "PUBLIC", label: "Anyone" },
+      { value: "CONNECTIONS", label: "Connections only" },
+    ],
+  }),
+  videoTitle: composeField(z.string().max(200).optional(), {
+    label: "Video title", description: "Title of the video (max 200 characters).",
+    kind: "text",
+    countMode: "chars",
+    maxLength: 200,
+    mediaType: "video",
+  }),
+  isReshareDisabledByAuthor: composeField(z.boolean().optional(), { label: "Disable resharing", description: "Stop others from resharing the post.", kind: "toggle" }),
+});
+export type LinkedInComposeInput = z.infer<typeof LinkedInComposeInputSchema>;

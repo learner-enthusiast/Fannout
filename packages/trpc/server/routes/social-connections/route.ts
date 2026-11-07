@@ -4,45 +4,38 @@ import {
   getConfiguredProviders,
 } from "@repo/services/oauth";
 import { ChannelSelectionSchema } from "@repo/services/oauth/model";
-import {
-  deactivateSocialConnection,
-  listSocialConnectionsByUserId,
-  toSocialConnectionView,
-} from "@repo/services/social-connections";
+import { PaginationInputSchema, paginatedOutput } from "@repo/services/common/pagination";
+import { deactivateSocialConnection, listSocialConnectionsPage, toSocialConnectionView } from "@repo/services/social-connections";
 import { SocialConnectionViewSchema } from "@repo/services/social-connections/model";
 import { z } from "zod";
 import { zodUndefinedModel } from "../../schema";
-import { protectedProcedure, router } from "../../trpc";
+import { router, scoped, sessionOnlyProcedure } from "../../trpc";
 
 const ProvidersAvailabilitySchema = z.object({
-  linkedin: z.boolean(),
-  x: z.boolean(),
-  youtube: z.boolean(),
-  facebook: z.boolean(),
-  threads: z.boolean(),
+  linkedin: z.boolean().describe("LinkedIn can be connected on this server."),
+  x: z.boolean().describe("X can be connected on this server."),
+  youtube: z.boolean().describe("YouTube can be connected on this server."),
+  facebook: z.boolean().describe("Facebook can be connected on this server."),
+  threads: z.boolean().describe("Threads can be connected on this server."),
 });
 
 export const socialConnectionsRouter = router({
-  list: protectedProcedure
-    .meta({ openapi: { method: "GET", path: "/social-connections", protect: true } })
+  /** Connected accounts, 10 at a time (newest first). */
+  list: scoped("connections:read")
+    .meta({ openapi: { method: "GET", path: "/social-connections", summary: "List connected social accounts", protect: true } })
+    .input(PaginationInputSchema.extend({ provider: z.enum(["LINKEDIN", "X", "YOUTUBE", "FACEBOOK", "THREADS"]).optional().describe("Only accounts of this provider.") }))
+    .output(paginatedOutput(SocialConnectionViewSchema))
+    .query(({ ctx, input }) => listSocialConnectionsPage(ctx.dbUserId, input)),
+
+  /** Which providers have app credentials configured (drives the connect buttons). */
+  providers: scoped("connections:read")
+    .meta({ openapi: { method: "GET", path: "/social-connections/providers", summary: "Which providers can be connected on this server", protect: true } })
     .input(zodUndefinedModel)
-    .output(
-      z.object({
-        connections: z.array(SocialConnectionViewSchema),
-        providers: ProvidersAvailabilitySchema,
-      }),
-    )
-    .query(async ({ ctx }) => {
-      const rows = await listSocialConnectionsByUserId(ctx.dbUserId, { limit: 100 });
-      const now = new Date();
-      return {
-        connections: rows.map((row) => toSocialConnectionView(row, now)),
-        providers: getConfiguredProviders(),
-      };
-    }),
+    .output(ProvidersAvailabilitySchema)
+    .query(() => getConfiguredProviders()),
 
   /** Disconnect: marks the connection inactive and wipes its stored tokens. */
-  disconnect: protectedProcedure
+  disconnect: sessionOnlyProcedure
     .meta({ openapi: { method: "DELETE", path: "/social-connections/{id}", protect: true } })
     .input(z.object({ id: z.uuid() }))
     .output(SocialConnectionViewSchema)
@@ -51,7 +44,7 @@ export const socialConnectionsRouter = router({
       return toSocialConnectionView(row);
     }),
 
-  channelSelection: protectedProcedure
+  channelSelection: sessionOnlyProcedure
     .meta({
       openapi: {
         method: "GET",
@@ -63,7 +56,7 @@ export const socialConnectionsRouter = router({
     .output(ChannelSelectionSchema)
     .query(({ ctx, input }) => getChannelSelection(ctx.dbUserId, input.id)),
 
-  finalizeChannelSelection: protectedProcedure
+  finalizeChannelSelection: sessionOnlyProcedure
     .meta({
       openapi: {
         method: "POST",

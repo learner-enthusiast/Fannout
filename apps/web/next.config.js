@@ -31,6 +31,9 @@ const nextConfig = {
             { source: '/trpc/:path*', destination: `${apiUrl}/trpc/:path*` },
             { source: '/api/oauth/:path*', destination: `${apiUrl}/api/oauth/:path*` },
             { source: '/webhooks/:path*', destination: `${apiUrl}/webhooks/:path*` },
+            // Public agent guide (generated docs/ai.md), served by the API.
+            { source: '/ai.md', destination: `${apiUrl}/ai.md` },
+            { source: '/llms.txt', destination: `${apiUrl}/llms.txt` },
         ]
     },
 }

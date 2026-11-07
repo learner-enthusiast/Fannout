@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { composeField, utf8Length, type ComposeCapabilities } from "../common/compose";
 import { graphCursorFields, graphFields, graphListSchema, NO_BEFORE_AND_AFTER, noBeforeAndAfter } from "../common/meta-graph";
 import {
   THREADS_ALT_TEXT_MAX,
@@ -586,3 +587,45 @@ export const ThreadsWebhookEventSchema = z.looseObject({
   values: z.looseObject({ field: z.string(), value: z.unknown() }),
 });
 export type ThreadsWebhookEvent = z.infer<typeof ThreadsWebhookEventSchema>;
+
+// ---------------------------------------------------------------------------
+// Compose (Fannout composer). Single source for the UI fields and validation.
+// ---------------------------------------------------------------------------
+
+
+export const THREADS_COMPOSE: ComposeCapabilities = {
+  supportsVideo: true,
+  supportsPhotos: true,
+  maxPhotos: THREADS_CAROUSEL.max,
+  minCarousel: 1,
+  supportsThumbnail: false,
+  // Meta downloads media from a URL, so storage must be publicly reachable.
+  mediaRules: { maxVideoBytes: 1024 * 1024 * 1024, maxVideoSeconds: 5 * 60, maxImageBytes: 8 * 1024 * 1024, requiresPublicUrl: true },
+  // DELETE /{threads-media-id} (threads_delete, 100/day) — https://developers.facebook.com/docs/threads/posts/delete-posts
+  supportsDelete: true,
+  deleteNote: "Needs the threads_delete permission. Threads allows 100 deletes per day.",
+  supportsEdit: false,
+  editableFields: [],
+  editNote: "The Threads API can't edit published posts. Delete and repost instead.",
+};
+
+export const ThreadsComposeInputSchema = z.object({
+  // Threads' 500 limit is enforced on UTF-8 bytes here (multi-byte scripts such as Bengali hit it sooner).
+  text: composeField(
+    z.string().refine((v) => utf8Length(v) <= THREADS_TEXT_MAX, `Posts can be at most ${THREADS_TEXT_MAX} bytes`).optional(),
+    { label: "Post text", description: "Post text (max 500 UTF-8 bytes).", kind: "textarea", countMode: "bytes", maxLength: THREADS_TEXT_MAX, ai: true },
+  ),
+  reply_control: composeField(ThreadsReplyControlSchema.optional(), {
+    label: "Who can reply", description: "Who can reply; omit for everyone.",
+    kind: "select",
+    options: [
+      { value: "everyone", label: "Everyone" },
+      { value: "accounts_you_follow", label: "Accounts you follow" },
+      { value: "mentioned_only", label: "Mentioned only" },
+      { value: "followers_only", label: "Followers only" },
+    ],
+  }),
+  topic_tag: composeField(topicTag.optional(), { label: "Topic", description: "Topic tag for the post (no periods or ampersands).", kind: "text", countMode: "chars", maxLength: THREADS_TOPIC_TAG.max }),
+  is_spoiler_media: composeField(z.boolean().optional(), { label: "Mark media as spoiler", description: "Blur the media as a spoiler.", kind: "toggle" }),
+});
+export type ThreadsComposeInput = z.infer<typeof ThreadsComposeInputSchema>;

@@ -25,6 +25,8 @@ import { StatusBadge } from '~/components/ui/status-badge'
 import { apiOrigin } from '~/lib/api-origin'
 import { getErrorMessage } from '~/lib/error'
 import { trpc } from '~/trpc/client'
+import { InfiniteList } from '~/components/infinite-list'
+import { infiniteOptions, useInfiniteList } from '~/hooks/use-infinite-list'
 
 import { ChannelSelectionDialog } from './channel-selection-dialog'
 import {
@@ -35,7 +37,7 @@ import {
 } from './providers'
 
 type Connection =
-    RouterOutputs['socialConnections']['list']['connections'][number]
+    RouterOutputs['socialConnections']['list']['items'][number]
 
 /**
  * Starts the OAuth flow. The API call carries the Clerk token, sets the
@@ -160,11 +162,29 @@ function ConnectionRow({ connection }: { connection: Connection }) {
     )
 }
 
+/** One provider's connected accounts, 10 at a time. */
+function ProviderConnections({ provider }: { provider: (typeof providers)[number] }) {
+    const query = trpc.socialConnections.list.useInfiniteQuery({ provider: provider.value }, infiniteOptions({ staleTime: 0 }))
+    const list = useInfiniteList(query)
+    return (
+        <InfiniteList
+            list={list}
+            getKey={(connection) => connection.id}
+            className="flex flex-col gap-2"
+            skeleton={<Skeleton className="h-16" />}
+            skeletonCount={1}
+            endLabel=""
+            empty={<p className="text-meta text-muted-foreground">No {provider.name} account connected yet.</p>}
+            renderItem={(connection) => <ConnectionRow connection={connection} />}
+        />
+    )
+}
+
 export function ConnectionsView() {
     const { getToken } = useAuth()
     const [connecting, setConnecting] = useState<ProviderSlug | null>(null)
     const [selectionId, setSelectionId] = useState<string | null>(null)
-    const list = trpc.socialConnections.list.useQuery()
+    const list = trpc.socialConnections.providers.useQuery(undefined, { staleTime: 60_000 })
     useOAuthResult(setSelectionId)
 
     async function connect(slug: ProviderSlug) {
@@ -181,7 +201,7 @@ export function ConnectionsView() {
         return (
             <Alert variant="destructive">
                 <CircleAlertIcon aria-hidden />
-                <AlertTitle>Connections could not be loaded</AlertTitle>
+                <AlertTitle>Providers could not be loaded</AlertTitle>
                 <AlertDescription>{getErrorMessage(list.error)}</AlertDescription>
             </Alert>
         )
@@ -191,11 +211,7 @@ export function ConnectionsView() {
         <div className="flex flex-col gap-6">
             {providers.map((provider) => {
                 const Icon = provider.icon
-                const connections =
-                    list.data?.connections.filter(
-                        (c) => c.provider === provider.value
-                    ) ?? []
-                const configured = list.data?.providers[provider.slug] ?? true
+                const configured = list.data?.[provider.slug] ?? true
 
                 return (
                     <Card key={provider.slug}>
@@ -230,22 +246,7 @@ export function ConnectionsView() {
                             </CardAction>
                         </CardHeader>
                         <CardContent>
-                            {list.isPending ? (
-                                <Skeleton className="h-16" />
-                            ) : connections.length === 0 ? (
-                                <p className="text-meta text-muted-foreground">
-                                    No {provider.name} account connected yet.
-                                </p>
-                            ) : (
-                                <ul className="flex flex-col gap-2">
-                                    {connections.map((connection) => (
-                                        <ConnectionRow
-                                            key={connection.id}
-                                            connection={connection}
-                                        />
-                                    ))}
-                                </ul>
-                            )}
+                            <ProviderConnections provider={provider} />
                         </CardContent>
                     </Card>
                 )

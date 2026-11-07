@@ -1,4 +1,6 @@
 export const LINKEDIN_API_BASE_URL = "https://api.linkedin.com/rest";
+/** v2 (Share on LinkedIn / UGC) endpoints — the w_member_social product. */
+export const LINKEDIN_V2_BASE_URL = "https://api.linkedin.com/v2";
 /** OIDC UserInfo (Sign In with LinkedIn using OpenID Connect). Not versioned. */
 export const LINKEDIN_USERINFO_URL = "https://api.linkedin.com/v2/userinfo";
 /**
@@ -34,3 +36,7 @@ export const LINKEDIN_SCOPES = {
   organizationAdminRead: "r_organization_admin",
   organizationAdminWrite: "rw_organization_admin",
 } as const;
+
+/** Share on LinkedIn (UGC): images per post, and the single-request upload ceiling. */
+export const LINKEDIN_UGC_MAX_IMAGES = 9;
+export const LINKEDIN_UGC_VIDEO_MAX_BYTES = 200 * 1024 * 1024;

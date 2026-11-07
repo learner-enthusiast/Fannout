@@ -3,7 +3,7 @@ import { publicProcedure, router } from "../../trpc";
 
 export const healthRouter = router({
   getHealth: publicProcedure
-    .meta({ openapi: { method: "GET", path: "/health" } })
+    .meta({ openapi: { method: "GET", path: "/health", summary: "Health check" } })
     .input(zodUndefinedModel)
     .output(
       z.object({
