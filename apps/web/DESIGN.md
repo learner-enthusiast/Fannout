@@ -128,7 +128,8 @@ add a variant in the shared component and document it in DESIGN.md first.
   It is named `FormField` because shadcn's low-level `Field` primitives already use
   the name `Field`.
 - `Badge` — neutral | primary | success | warning | destructive | outline.
-- `StatusBadge` — published, connected, processing, expiring, failed, reconnect, pending.
+- `StatusBadge` — published, connected, ready (success), uploading, processing, expiring
+  (warning), failed, reconnect (destructive), pending (muted). Media uses ready/uploading.
 - `Card` (+ Header/Title/Description/Action/Content/Footer), `Alert` (info | success |
   warning | destructive), `Dialog`, `ConfirmDialog`, `DropdownMenu`, `Tooltip`, `Tabs`,
   `Switch`, `Separator`, `Skeleton`, `Toaster` (sonner), `EmptyState`, `PageHeader`.

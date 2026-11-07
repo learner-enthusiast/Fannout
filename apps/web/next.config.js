@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs'
+import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 
 // Load the monorepo root .env. Done here (not via `node --env-file`) because

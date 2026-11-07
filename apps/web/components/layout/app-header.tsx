@@ -18,15 +18,18 @@ import { ThemeToggle } from '~/components/layout/theme-toggle'
  * Sticky top bar. `withSidebar` adds the sidebar trigger (app routes only).
  * The page title is derived from the nav config unless `title` is given.
  * `authSlot` receives <AuthControls/> (a server-safe Clerk island).
+ * `toolsSlot` holds app-only header tools (uploads indicator, notifications).
  */
 export function AppHeader({
     withSidebar = false,
     title,
     authSlot,
+    toolsSlot,
 }: {
     withSidebar?: boolean
     title?: React.ReactNode
     authSlot?: React.ReactNode
+    toolsSlot?: React.ReactNode
 }) {
     const pathname = usePathname()
     const pageTitle =
@@ -68,6 +71,7 @@ export function AppHeader({
                 </>
             ) : null}
             <div className="ms-auto flex shrink-0 items-center gap-2">
+                {toolsSlot}
                 <ThemeToggle />
                 {authSlot}
             </div>

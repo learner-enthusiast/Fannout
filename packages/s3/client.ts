@@ -42,6 +42,7 @@ export function getPublicS3Client(): S3Client {
 }
 
 export const defaultBucket = () => env.S3_BUCKET;
+export const defaultRegion = () => env.S3_REGION;
 
 export function closeS3(): void {
   client?.destroy();

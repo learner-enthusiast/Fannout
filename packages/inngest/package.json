@@ -13,6 +13,8 @@
   },
   "dependencies": {
     "@repo/logger": "workspace:^",
+    "@repo/s3": "workspace:*",
+    "@repo/services": "workspace:*",
     "inngest": "^4",
     "zod": "^4.3.5"
   }

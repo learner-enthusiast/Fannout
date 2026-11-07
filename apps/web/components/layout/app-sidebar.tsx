@@ -15,10 +15,13 @@ import {
     SidebarMenu,
     SidebarMenuButton,
     SidebarMenuItem,
+    SidebarMenuSub,
+    SidebarMenuSubButton,
+    SidebarMenuSubItem,
     SidebarRail,
     useSidebar,
 } from '~/components/ui/sidebar'
-import { navGroups } from '~/components/layout/nav'
+import { activeChildHref, navGroups } from '~/components/layout/nav'
 
 /**
  * App navigation. Expanded ↔ icon rail (Ctrl/⌘+B, state in a cookie);
@@ -66,6 +69,32 @@ export function AppSidebar() {
                                                     <item.icon aria-hidden />
                                                     <span>{item.title}</span>
                                                 </SidebarMenuButton>
+                                                {item.children ? (
+                                                    <SidebarMenuSub>
+                                                        {item.children.map((child) => {
+                                                            const childActive =
+                                                                activeChildHref(item, pathname) === child.href
+                                                            return (
+                                                                <SidebarMenuSubItem key={child.href}>
+                                                                    <SidebarMenuSubButton
+                                                                        isActive={childActive}
+                                                                        render={
+                                                                            <Link
+                                                                                href={child.href}
+                                                                                aria-current={childActive ? 'page' : undefined}
+                                                                                onClick={() => {
+                                                                                    if (isMobile) setOpenMobile(false)
+                                                                                }}
+                                                                            />
+                                                                        }
+                                                                    >
+                                                                        <span>{child.title}</span>
+                                                                    </SidebarMenuSubButton>
+                                                                </SidebarMenuSubItem>
+                                                            )
+                                                        })}
+                                                    </SidebarMenuSub>
+                                                ) : null}
                                             </SidebarMenuItem>
                                         )
                                     })}

@@ -1,4 +1,10 @@
-export { closeS3, defaultBucket, getPublicS3Client, getS3Client } from "./client";
+export {
+  closeS3,
+  defaultBucket,
+  defaultRegion,
+  getPublicS3Client,
+  getS3Client,
+} from "./client";
 export { assertSafeKey, buildObjectKey } from "./keys";
 export {
   copyObject,

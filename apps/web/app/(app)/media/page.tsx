@@ -1,14 +1,25 @@
 import type { Metadata } from 'next'
 
-import { ComingSoon } from '~/components/layout/coming-soon'
+import { PageHeader } from '~/components/layout/page-header'
+import { NewFolderButton } from '~/components/media/add-to-folder-dialog'
+import { MediaLibrary, UploadButton } from '~/components/media/media-library'
 
 export const metadata: Metadata = { title: 'Media' }
 
 export default function MediaPage() {
     return (
-        <ComingSoon
-            title="Media"
-            description="Images and videos you can attach to posts."
-        />
+        <>
+            <PageHeader
+                title="Media"
+                description="Videos, images, subtitles and social JSON. Group them into folders."
+                actions={
+                    <>
+                        <NewFolderButton />
+                        <UploadButton />
+                    </>
+                }
+            />
+            <MediaLibrary />
+        </>
     )
 }

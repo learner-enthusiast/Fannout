@@ -1,0 +1,17 @@
+{
+  "video": "graphql-vs-rest",
+  "files": {
+    "main": "graphql-vs-rest_16x9.mp4",
+    "main_portrait": "graphql-vs-rest_9x16.mp4",
+    "trailer_landscape": "graphql-vs-rest_trailer_16x9.mp4",
+    "trailer_portrait": "graphql-vs-rest_trailer_9x16.mp4",
+    "subtitles": "graphql-vs-rest.srt",
+    "thumbnail": "graphql-vs-rest_thumbnail.png"
+  },
+  "linkedin": { "text": "GraphQL or REST? Here's how we decide, with real trade-offs." },
+  "x": { "text": "GraphQL vs REST in 60 seconds 🧵" },
+  "instagram": { "caption": "GraphQL vs REST — which one should you pick?", "hashtags": ["graphql", "rest", "api"] },
+  "facebook": { "text": "We compared GraphQL and REST on a real project." },
+  "threads": { "text": "GraphQL vs REST, the short version." },
+  "youtube": { "title": "GraphQL vs REST: which should you use?", "description": "A practical comparison.", "tags": ["graphql", "rest"] }
+}

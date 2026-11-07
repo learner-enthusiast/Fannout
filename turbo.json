@@ -39,6 +39,9 @@
   "globalEnv": [
     "NODE_ENV",
     "FANNOUT_DEV_AUTH_BYPASS",
-    "SKIP_ENV_VALIDATION"
+    "SKIP_ENV_VALIDATION",
+    "BASE_URL",
+    "WEB_URL",
+    "FFPROBE_PATH"
   ]
 }

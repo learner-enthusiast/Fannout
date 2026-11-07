@@ -7,6 +7,9 @@ import { AppHeader } from '~/components/layout/app-header'
 import { AppSidebar } from '~/components/layout/app-sidebar'
 import { AuthControls } from '~/components/layout/auth-controls'
 import { SkipLink } from '~/components/layout/skip-link'
+import { NotificationBell } from '~/components/notifications/notification-bell'
+import { GlobalSearch } from '~/components/search/global-search'
+import { UploadsIndicator } from '~/components/uploads/uploads-indicator'
 
 /**
  * Signed-in app frame: sidebar + (header, main#content, footer).
@@ -22,7 +25,17 @@ export async function AppShell({ children }: { children: React.ReactNode }) {
             <SkipLink />
             <AppSidebar />
             <div className="flex min-h-svh min-w-0 flex-1 flex-col">
-                <AppHeader withSidebar authSlot={<AuthControls />} />
+                <AppHeader
+                    withSidebar
+                    authSlot={<AuthControls />}
+                    toolsSlot={
+                        <>
+                            <GlobalSearch />
+                            <UploadsIndicator />
+                            <NotificationBell />
+                        </>
+                    }
+                />
                 <main
                     id="content"
                     tabIndex={-1}

@@ -6,6 +6,7 @@ import {
     LinkIcon,
     LoaderCircleIcon,
     RefreshCwOffIcon,
+    UploadIcon,
     type LucideIcon,
 } from 'lucide-react'
 
@@ -23,6 +24,8 @@ export const statusMap = {
         icon: CircleCheckIcon,
     },
     connected: { label: 'Connected', variant: 'success', icon: LinkIcon },
+    ready: { label: 'Ready', variant: 'success', icon: CircleCheckIcon },
+    uploading: { label: 'Uploading', variant: 'warning', icon: UploadIcon },
     processing: {
         label: 'Processing',
         variant: 'warning',

@@ -19,6 +19,8 @@ export const media = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
 
+    /** Display name, editable. Defaults to the filename without its extension. */
+    name: text("name").notNull(),
     type: text("type").notNull(),
     status: text("status").notNull().default("pending"),
 
@@ -42,5 +44,9 @@ export const media = pgTable(
       .$onUpdate(() => new Date())
       .notNull(),
   },
-  (table) => [index("media_user_id_idx").on(table.userId)],
+  (table) => [
+    index("media_user_id_idx").on(table.userId),
+    index("media_user_type_created_idx").on(table.userId, table.type, table.createdAt),
+    index("media_name_trgm_idx").using("gin", table.name.op("gin_trgm_ops")),
+  ],
 );
