@@ -19,3 +19,11 @@ export {
   type UploadOptions,
 } from "./objects";
 export { getDownloadUrl, getUploadUrl } from "./presign";
+export {
+  abortMultipartUpload,
+  completeMultipartUpload,
+  createMultipartUpload,
+  getUploadPartUrls,
+  MAX_MULTIPART_PARTS,
+  partCount,
+} from "./multipart";

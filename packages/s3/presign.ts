@@ -1,6 +1,6 @@
 import { GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { defaultBucket, getPublicS3Client } from "./client";
+import { defaultBucket, getPublicS3Client, getS3Client } from "./client";
 import { assertSafeKey } from "./keys";
 
 const MAX_EXPIRES_SECONDS = 7 * 24 * 60 * 60; // SigV4 limit
@@ -45,13 +45,17 @@ export async function getUploadUrl(
   };
 }
 
-/** Time-limited download URL. `downloadAs` forces a "Save as" filename. */
+/**
+ * Time-limited download URL. `downloadAs` forces a "Save as" filename.
+ * `internal` signs against the server-side endpoint (for server tools such as
+ * ffprobe) instead of the browser-facing one.
+ */
 export async function getDownloadUrl(
   key: string,
-  options: { bucket?: string; expiresIn?: number; downloadAs?: string } = {},
+  options: { bucket?: string; expiresIn?: number; downloadAs?: string; internal?: boolean } = {},
 ): Promise<string> {
   return getSignedUrl(
-    getPublicS3Client(),
+    options.internal ? getS3Client() : getPublicS3Client(),
     new GetObjectCommand({
       Bucket: options.bucket ?? defaultBucket(),
       Key: assertSafeKey(key),
