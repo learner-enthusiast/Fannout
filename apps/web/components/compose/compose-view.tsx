@@ -1,6 +1,6 @@
 'use client'
 
-import { BracesIcon, CalendarClockIcon, CaptionsIcon, ChevronDownIcon, FilmIcon, GripVerticalIcon, ImagesIcon, SendIcon, SparklesIcon, TriangleAlertIcon, UsersIcon, XIcon } from 'lucide-react'
+import { BracesIcon, CalendarClockIcon, CaptionsIcon, ChevronDownIcon, FilmIcon, GripVerticalIcon, ImageIcon, ImagesIcon, SendIcon, SparklesIcon, TriangleAlertIcon, UsersIcon, XIcon } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -11,7 +11,7 @@ import { MediaPreview } from '~/components/media/media-preview'
 import { Alert, AlertDescription, AlertTitle } from '~/components/ui/alert'
 import { Badge } from '~/components/ui/badge'
 import { Button } from '~/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '~/components/ui/card'
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '~/components/ui/card'
 import { Checkbox } from '~/components/ui/checkbox'
 import { ConfirmDialog } from '~/components/ui/confirm-dialog'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '~/components/ui/dropdown-menu'
@@ -20,6 +20,7 @@ import { formatScheduled } from '~/lib/schedule'
 import { ScheduleChip, ScheduleControl, ScheduleDialog } from './schedule-control'
 import { EmptyState } from '~/components/ui/empty-state'
 import { Skeleton } from '~/components/ui/skeleton'
+import { Tooltip, TooltipContent, TooltipTrigger } from '~/components/ui/tooltip'
 import { ToggleGroup, ToggleGroupItem } from '~/components/ui/toggle-group'
 import { useDebouncedValue } from '~/hooks/use-debounced-value'
 import {
@@ -72,11 +73,14 @@ function SectionCard({
     step,
     title,
     description,
+    action,
     children,
 }: {
     step: number
     title: string
     description?: string
+    /** Rendered top-right of the header (CardAction). */
+    action?: React.ReactNode
     children: React.ReactNode
 }) {
     return (
@@ -86,6 +90,7 @@ function SectionCard({
                     <span className="text-mono text-muted-foreground">{step}.</span> {title}
                 </CardTitle>
                 {description ? <CardDescription>{description}</CardDescription> : null}
+                {action ? <CardAction>{action}</CardAction> : null}
             </CardHeader>
             <CardContent>{children}</CardContent>
         </Card>
@@ -102,7 +107,8 @@ export function ComposeView() {
     const [draft, setDraft] = useState<ComposeDraft>(emptyDraft)
     const [hydrated, setHydrated] = useState(false)
     const [cache, setCache] = useState<Record<string, MediaLite>>({})
-    const [picker, setPicker] = useState<null | { kind: 'video' | 'photos' } | { kind: 'thumbnail'; connectionId: string }>(null)
+    // connectionId null = the shared thumbnail for all accounts.
+    const [picker, setPicker] = useState<null | { kind: 'video' | 'photos' } | { kind: 'thumbnail'; connectionId: string | null }>(null)
     const [confirmOpen, setConfirmOpen] = useState(false)
     const [scheduleAllOpen, setScheduleAllOpen] = useState(false)
     const [issues, setIssues] = useState<Issue[]>([])
@@ -129,7 +135,7 @@ export function ComposeView() {
     // Media referenced by a restored draft but not loaded yet.
     const referenced = useMemo(
         () =>
-            [...new Set([draft.videoId, ...draft.photoIds, ...Object.values(draft.thumbnails), draft.aiJsonId, draft.aiSubtitleId].filter(Boolean) as string[])].filter(
+            [...new Set([draft.videoId, ...draft.photoIds, ...Object.values(draft.thumbnails), draft.thumbnailAll, draft.aiJsonId, draft.aiSubtitleId].filter(Boolean) as string[])].filter(
                 (id) => !cache[id]
             ),
         [draft, cache]
@@ -160,6 +166,10 @@ export function ComposeView() {
     const targets = selected.filter((c) => supports(c) && c.status === 'connected')
     const excluded = selected.filter((c) => !supports(c))
     const video = draft.videoId ? (cache[draft.videoId] ?? null) : null
+    /** A card's own thumbnail, else the shared one. */
+    const thumbnailOf = (connectionId: string) => draft.thumbnails[connectionId] ?? draft.thumbnailAll
+    const sharedThumb = draft.thumbnailAll ? (cache[draft.thumbnailAll] ?? null) : null
+    const thumbTargets = targets.filter((c) => capsFor(c)?.supportsThumbnail)
     const photos = draft.photoIds.map((id) => cache[id]).filter((m): m is MediaLite => Boolean(m))
     const mediaIds = draft.mediaType === 'video' ? (draft.videoId ? [draft.videoId] : []) : draft.photoIds
 
@@ -213,9 +223,8 @@ export function ComposeView() {
             aiSubtitleId: d.aiSubtitleId ?? subtitles?.mediaId ?? null,
             videoId: d.mediaType === 'video' ? (main?.mediaId ?? d.videoId) : d.videoId,
             photoIds: d.mediaType === 'photos' && images.length ? images.map((i) => i.mediaId) : d.photoIds,
-            thumbnails: thumb
-                ? Object.fromEntries(d.accountIds.map((id) => [id, d.thumbnails[id] ?? thumb.mediaId]))
-                : d.thumbnails,
+            // The folder's thumbnail becomes the shared one; cards keep their own picks.
+            thumbnailAll: d.thumbnailAll ?? thumb?.mediaId ?? null,
         }))
         toast.success(`Filled from ${folder.name}`)
     }
@@ -233,8 +242,8 @@ export function ComposeView() {
                 ? {
                       thumbnailByConnection: Object.fromEntries(
                           targets
-                              .filter((c) => capsFor(c)?.supportsThumbnail && draft.thumbnails[c.id])
-                              .map((c) => [c.id, draft.thumbnails[c.id] as string])
+                              .filter((c) => capsFor(c)?.supportsThumbnail && thumbnailOf(c.id))
+                              .map((c) => [c.id, thumbnailOf(c.id) as string])
                       ),
                   }
                 : {}),
@@ -340,6 +349,10 @@ export function ComposeView() {
         }
     }
 
+    /** Every AI-capable field (titles, descriptions, captions…) on every selected account. */
+    const aiTargets = targets.filter((c) => aiFieldsOf(c).length > 0)
+    const generateAll = () => void startGeneration(aiTargets.map((c) => ({ socialConnectionId: c.id })))
+
     const aiFor = (connection: Connection) => (field: string) => {
         const fill = draft.aiFills[connection.id]?.[field]
         return {
@@ -421,12 +434,8 @@ export function ComposeView() {
                             variant="secondary"
                             leftIcon={<SparklesIcon aria-hidden />}
                             loading={aiBusy}
-                            disabled={!targets.some((c) => aiFieldsOf(c).length > 0)}
-                            onClick={() =>
-                                void startGeneration(
-                                    targets.filter((c) => aiFieldsOf(c).length > 0).map((c) => ({ socialConnectionId: c.id }))
-                                )
-                            }
+                            disabled={aiTargets.length === 0}
+                            onClick={generateAll}
                         >
                             Generate All With AI
                         </Button>
@@ -563,7 +572,44 @@ export function ComposeView() {
                                 {video ? 'Change Video' : 'Choose Video'}
                             </Button>
                         </div>
-                    ) : (
+                    ) : null}
+
+                    {draft.mediaType === 'video' ? (
+                        <div className="flex items-center gap-2 rounded-surface border border-border bg-background p-4">
+                            {sharedThumb ? (
+                                <span className="w-16 shrink-0 overflow-hidden rounded-control border border-border">
+                                    <MediaPreview type="image" url={sharedThumb.url} alt={sharedThumb.name} />
+                                </span>
+                            ) : (
+                                <ImageIcon aria-hidden className="size-4 text-muted-foreground" />
+                            )}
+                            <span className="flex min-w-0 flex-1 flex-col">
+                                <span className="text-label text-foreground">Thumbnail for all accounts</span>
+                                <span className="truncate text-meta">
+                                    {draft.thumbnailAll ? (sharedThumb?.name ?? 'Loading…') : 'None — platform default'}
+                                    {draft.thumbnailAll && thumbTargets.length
+                                        ? ` · ${thumbTargets.filter((c) => !draft.thumbnails[c.id]).length} of ${thumbTargets.length} account${thumbTargets.length === 1 ? '' : 's'} use it`
+                                        : ''}
+                                    {targets.length && !thumbTargets.length ? ' · none of the selected accounts take a thumbnail' : ''}
+                                </span>
+                            </span>
+                            {draft.thumbnailAll ? (
+                                <Button
+                                    variant="ghost"
+                                    size="icon-sm"
+                                    aria-label="Remove the thumbnail for all accounts"
+                                    onClick={() => update({ thumbnailAll: null })}
+                                >
+                                    <XIcon aria-hidden />
+                                </Button>
+                            ) : null}
+                            <Button variant="secondary" size="sm" onClick={() => setPicker({ kind: 'thumbnail', connectionId: null })}>
+                                {draft.thumbnailAll ? 'Change' : 'Choose'}
+                            </Button>
+                        </div>
+                    ) : null}
+
+                    {draft.mediaType === 'photos' ? (
                         <div className="flex flex-col gap-4">
                             {photos.length ? (
                                 <ol className="flex flex-wrap gap-2" aria-label="Carousel order (drag to reorder)">
@@ -613,7 +659,7 @@ export function ComposeView() {
                                 </Button>
                             </div>
                         </div>
-                    )}
+                    ) : null}
                     {mediaIssue && selected.length ? <p className="text-meta">{mediaIssue}.</p> : null}
                     {batchIssues.map((issue) => (
                         <Alert key={issue.message} variant="destructive">
@@ -628,6 +674,30 @@ export function ComposeView() {
                     step={3}
                     title="AI sources (optional)"
                     description="Pick a social JSON and/or subtitles to let AI write titles and captions. Nothing is posted automatically."
+                    action={
+                        <Tooltip>
+                            {/* Disabled buttons get no pointer events, so the span carries the tooltip (and focus while disabled). */}
+                            <TooltipTrigger render={<span tabIndex={aiEnabled && aiTargets.length ? undefined : 0} />}>
+                                <Button
+                                    variant="ghost"
+                                    size="icon-sm"
+                                    aria-label="Fill all titles and descriptions with AI"
+                                    disabled={!aiEnabled || aiTargets.length === 0}
+                                    loading={aiBusy}
+                                    onClick={generateAll}
+                                >
+                                    <SparklesIcon aria-hidden />
+                                </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                                {!aiEnabled
+                                    ? 'Choose a social JSON or subtitles first'
+                                    : aiTargets.length === 0
+                                      ? 'None of the selected accounts have AI fields'
+                                      : `Fill titles and descriptions for ${aiTargets.length} account${aiTargets.length === 1 ? '' : 's'}`}
+                            </TooltipContent>
+                        </Tooltip>
+                    }
                 >
                     <div className="grid gap-4 sm:grid-cols-2">
                         {(
@@ -669,7 +739,8 @@ export function ComposeView() {
                     {targets.map((connection) => {
                         const caps = capsFor(connection)!
                         const textField = textFieldOf(caps)
-                        const thumbId = draft.thumbnails[connection.id]
+                        const thumbId = thumbnailOf(connection.id)
+                        const ownThumb = Boolean(draft.thumbnails[connection.id])
                         return (
                             <AccountCard
                                 key={connection.id}
@@ -691,6 +762,17 @@ export function ComposeView() {
                                     }))
                                 }
                                 onPickThumbnail={() => setPicker({ kind: 'thumbnail', connectionId: connection.id })}
+                                thumbnailInherited={!ownThumb && Boolean(draft.thumbnailAll)}
+                                onResetThumbnail={
+                                    ownThumb
+                                        ? () =>
+                                              update((d) => {
+                                                  const thumbnails = { ...d.thumbnails }
+                                                  delete thumbnails[connection.id]
+                                                  return { thumbnails }
+                                              })
+                                        : undefined
+                                }
                                 aiFor={aiFor(connection)}
                                 headerChip={
                                     <ScheduleChip
@@ -773,7 +855,7 @@ export function ComposeView() {
                     if (!item || picker?.kind !== 'thumbnail') return
                     remember([item])
                     const id = picker.connectionId
-                    update((d) => ({ thumbnails: { ...d.thumbnails, [id]: item.id } }))
+                    update((d) => (id ? { thumbnails: { ...d.thumbnails, [id]: item.id } } : { thumbnailAll: item.id }))
                 }}
             />
 

@@ -23,9 +23,13 @@
   },
   "dependencies": {
     "@clerk/express": "2.1.86",
+    "@repo/bullmq": "workspace:^",
+    "@repo/database": "workspace:^",
     "@repo/errors": "workspace:^",
     "@repo/inngest": "workspace:^",
     "@repo/logger": "workspace:*",
+    "@repo/redis": "workspace:^",
+    "@repo/s3": "workspace:^",
     "@repo/services": "workspace:^",
     "@repo/trpc": "workspace:*",
     "@scalar/express-api-reference": "^0.8.30",

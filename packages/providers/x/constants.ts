@@ -49,3 +49,19 @@ export const X_SCOPES = {
   dmWrite: "dm.write",
   mediaWrite: "media.write",
 } as const;
+
+/**
+ * Chunked v2 upload limits. Segments should be ≤ 5 MB (server max 8 MB);
+ * segment_index is 0–999. tweet_video: 8 GB / 20 min default, 16 GB / 125 min
+ * Premium (X rejects over-allowance videos at post time with 403).
+ * https://docs.x.com/x-api/media/quickstart/media-upload-chunked
+ */
+export const X_VIDEO_SEGMENT_BYTES = 4 * 1024 * 1024;
+export const X_MAX_SEGMENT_BYTES = 5 * 1024 * 1024;
+export const X_MAX_SEGMENTS = 1000;
+export const X_VIDEO_MAX_BYTES = 16 * 1024 * 1024 * 1024;
+export const X_VIDEO_MAX_SECONDS = 125 * 60;
+/** Media ids expire after expires_after_secs (86 400 s in the docs' examples). */
+export const X_MEDIA_TTL_SECONDS = 86_400;
+/** Request timeout for /2/media/upload calls (one segment per request). */
+export const X_MEDIA_REQUEST_TIMEOUT_MS = 120_000;

@@ -14,6 +14,8 @@ import {
   setPostStep,
 } from "@repo/services/publishing/run";
 import { completeSchedule, isScheduleCurrent } from "@repo/services/scheduling";
+import { UPLOAD_CONFIG } from "@repo/services/publishing/upload/config";
+import type { PrepareStep } from "@repo/services/publishing/upload/progress";
 import type { GetStepTools } from "inngest";
 import { z } from "zod";
 import { inngest } from "../client";
@@ -111,7 +113,11 @@ export const publishPost = inngest.createFunction(
   {
     id: "publish-post",
     triggers: [postPublishRequested],
-    concurrency: { limit: 1, key: "event.data.socialConnectionId" },
+    // One run per account at a time, and never two runs uploading the same post.
+    concurrency: [
+      { limit: 1, key: "event.data.socialConnectionId" },
+      { limit: 1, key: "event.data.postId" },
+    ],
     retries: 3,
     // posts.delete on a queued/publishing post, or a reschedule / cancel / publish-now, stops this run.
     cancelOn: [
@@ -146,7 +152,28 @@ export const publishPost = inngest.createFunction(
         }
       });
 
-    const prepared = await run("prepare", () => runPublishPhase(postId, "prepare", { scheduled }));
+    /**
+     * prepare as a chain of steps: each call does one unit (a group of chunks
+     * for ≤ ~60 s, or one processing poll), saves progress, and names the next
+     * step (e.g. "youtube-chunk-12"). Completed steps are memoized, so a retry
+     * re-runs only the unit that failed — never the whole upload. Waits are
+     * step.sleep between steps, never inside one.
+     */
+    const prepareAll = async (prefix: string) => {
+      let id = prefix;
+      for (let i = 0; i < UPLOAD_CONFIG.MAX_PREPARE_STEPS; i++) {
+        const result = await run(id, () => runPublishPhase(postId, "prepare", { scheduled }));
+        if (!result.ok) return result;
+        // `null` = memoized result of a run that started before chunked prepare existed.
+        const next = result.value as PrepareStep | null;
+        if (!next || next.done) return result;
+        if (next.waitSeconds) await step.sleep(`${prefix}:${next.next}:wait`, `${Math.ceil(next.waitSeconds)}s`);
+        id = `${prefix}:${next.next}`;
+      }
+      throw new Error("Upload needed too many steps");
+    };
+
+    const prepared = await prepareAll("prepare");
     if (!prepared.ok) {
       await afterFinish(step, postId, attempt);
       return { status: "failed" as const, code: prepared.code, message: prepared.message };
@@ -160,6 +187,12 @@ export const publishPost = inngest.createFunction(
       // Rescheduled / cancelled while we slept → a newer version owns the post.
       const current = await step.run("recheck-schedule", () => isScheduleCurrent(postId, scheduleVersion));
       if (!current) return { skipped: true, reason: "schedule_changed" };
+      // After a long wait some uploads must be refreshed (X media ids expire ~24 h); a no-op otherwise.
+      const refreshed = await prepareAll("reprepare");
+      if (!refreshed.ok) {
+        await afterFinish(step, postId, attempt);
+        return { status: "failed" as const, code: refreshed.code, message: refreshed.message };
+      }
     }
 
     const result = await run("finalize", () => runPublishPhase(postId, "finalize", { scheduled }));

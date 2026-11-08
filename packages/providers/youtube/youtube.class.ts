@@ -6,6 +6,7 @@ import type { MediaSource } from "../common/media";
 import { ProviderError } from "../common/provider-error";
 import { DEFAULT_RETRY, DEFAULT_TIMEOUT_MS, type BaseProviderConfig, type ProviderAccount } from "../common/provider.types";
 import { computeRetryDelayMs } from "../common/rate-limit";
+import { sendUploadRequest, uploadResponseError } from "../common/upload-request";
 import { YouTubeEndpoints } from "./endpoints";
 import * as M from "./model";
 
@@ -612,4 +613,103 @@ export class YouTubeProvider extends BaseProvider<YouTubeProviderConfig> {
   }
 
   // </generated-methods>
+
+  // ================= resumable upload (hand-written) =================
+  // https://developers.google.com/youtube/v3/guides/using_resumable_upload_protocol
+  // googleapis' videos.insert sends uploadType=multipart in ONE request (bounded by
+  // timeoutMs), so big files were cut and every retry created a new video.
+
+  /**
+   * POST /upload/youtube/v3/videos?uploadType=resumable — opens a session and
+   * returns its URI (Location). No bytes are sent; no video exists yet.
+   */
+  async createResumableUpload(input: {
+    part: string[];
+    notifySubscribers?: boolean;
+    requestBody: M.YouTubeVideo;
+    totalBytes: number;
+    mimeType: string;
+  }): Promise<{ sessionUrl: string }> {
+    const query = new URLSearchParams({
+      uploadType: "resumable",
+      part: input.part.join(","),
+      ...(input.notifySubscribers === undefined ? {} : { notifySubscribers: String(input.notifySubscribers) }),
+    });
+    const response = await sendUploadRequest({
+      provider: this.name,
+      method: "POST",
+      url: `https://www.googleapis.com/upload/youtube/v3/videos?${query}`,
+      headers: {
+        "content-type": "application/json; charset=UTF-8",
+        "x-upload-content-length": String(input.totalBytes),
+        "x-upload-content-type": input.mimeType.startsWith("video/") ? input.mimeType : "application/octet-stream",
+      },
+      body: JSON.stringify(input.requestBody),
+      timeoutMs: DEFAULT_TIMEOUT_MS,
+      tokens: this.tokens,
+      fetch: this.config.fetch,
+    });
+    if (!response.ok) throw await uploadResponseError(this.name, response, "YouTube upload session");
+    await response.body?.cancel();
+    const sessionUrl = response.headers.get("location");
+    if (!sessionUrl) throw new ProviderError({ provider: this.name, code: "INVALID_RESPONSE", message: "YouTube returned no upload session" });
+    return { sessionUrl };
+  }
+
+  /** Ask the session how many bytes it holds (PUT, Content-Range: bytes *\/total). */
+  async queryResumableUpload(sessionUrl: string, totalBytes: number): Promise<YouTubeResumableState> {
+    const response = await sendUploadRequest({
+      provider: this.name,
+      method: "PUT",
+      url: sessionUrl,
+      // No body: fetch sends Content-Length: 0 itself for a body-less PUT.
+      headers: { "content-range": `bytes */${totalBytes}` },
+      timeoutMs: DEFAULT_TIMEOUT_MS,
+      tokens: this.tokens,
+      fetch: this.config.fetch,
+    });
+    return this.resumableState(response);
+  }
+
+  /** PUT bytes [start, start+data.length) of the file to the session. */
+  async uploadResumableChunk(sessionUrl: string, input: { start: number; data: Uint8Array; totalBytes: number; timeoutMs?: number }): Promise<YouTubeResumableState> {
+    const end = input.start + input.data.byteLength - 1;
+    const response = await sendUploadRequest({
+      provider: this.name,
+      method: "PUT",
+      url: sessionUrl,
+      // Content-Length is computed by fetch from the byte body.
+      headers: { "content-range": `bytes ${input.start}-${end}/${input.totalBytes}` },
+      body: input.data as Uint8Array<ArrayBuffer>,
+      timeoutMs: input.timeoutMs,
+      tokens: this.tokens,
+      fetch: this.config.fetch,
+    });
+    return this.resumableState(response);
+  }
+
+  /** 308 → bytes confirmed (from Range, trusted over our math); 200/201 → video; 404/410 → session gone. */
+  private async resumableState(response: Response): Promise<YouTubeResumableState> {
+    if (response.status === 308) {
+      await response.body?.cancel();
+      const range = response.headers.get("range");
+      const match = range ? /bytes=0-(\d+)/.exec(range) : null;
+      return { state: "incomplete", confirmedBytes: match ? Number(match[1]) + 1 : 0 };
+    }
+    if (response.status === 200 || response.status === 201) {
+      const video = this.parseResponse(M.YouTubeVideoSchema, await response.json(), "videos.insert(resumable)");
+      if (!video.id) throw new ProviderError({ provider: this.name, code: "INVALID_RESPONSE", message: "YouTube did not return a video id" });
+      return { state: "complete", video: { ...video, id: video.id } };
+    }
+    if (response.status === 404 || response.status === 410) {
+      await response.body?.cancel();
+      return { state: "expired" };
+    }
+    throw await uploadResponseError(this.name, response, "YouTube upload");
+  }
 }
+
+export type YouTubeResumableState =
+  | { state: "incomplete"; confirmedBytes: number }
+  | { state: "complete"; video: M.YouTubeVideo & { id: string } }
+  | { state: "expired" };

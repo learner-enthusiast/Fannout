@@ -22,7 +22,10 @@ export type ComposeDraft = {
     photoIds: string[]
     folderId: string | null
     inputs: Record<string, Record<string, unknown>>
+    /** Per-account thumbnail; wins over thumbnailAll. Absent/null = use thumbnailAll. */
     thumbnails: Record<string, string | null>
+    /** Thumbnail for every account that supports one, unless the card picks its own. */
+    thumbnailAll: string | null
     /** Photos mode: per-account subset/order. */
     photoOverrides: Record<string, string[]>
     /** One key per submit attempt; a retried click re-uses it (no duplicates). */
@@ -48,6 +51,7 @@ export const emptyDraft = (): ComposeDraft => ({
     folderId: null,
     inputs: {},
     thumbnails: {},
+    thumbnailAll: null,
     photoOverrides: {},
     idempotencyKey: crypto.randomUUID(),
     aiJsonId: null,

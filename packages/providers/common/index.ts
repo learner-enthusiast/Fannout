@@ -10,3 +10,4 @@ export * from "./media";
 export * from "./webhooks";
 export * from "./meta-graph";
 export * from "./compose";
+export * from "./upload-request";

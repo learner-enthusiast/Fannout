@@ -37,6 +37,16 @@ export const LINKEDIN_SCOPES = {
   organizationAdminWrite: "rw_organization_admin",
 } as const;
 
-/** Share on LinkedIn (UGC): images per post, and the single-request upload ceiling. */
+/** Share on LinkedIn (UGC): images per post. */
 export const LINKEDIN_UGC_MAX_IMAGES = 9;
-export const LINKEDIN_UGC_VIDEO_MAX_BYTES = 200 * 1024 * 1024;
+
+/**
+ * v2 assets upload mechanism threshold — NOT a size limit. LinkedIn allows a
+ * single upload below 200 MB and multipart at any size, so we switch early:
+ * below 190 MB (decimal, 190 000 000 bytes) → SINGLE_REQUEST_UPLOAD (one PUT);
+ * from there → MULTIPART_UPLOAD + fileSize. The 10 MB margin keeps us clear of
+ * the limit whether LinkedIn means MB or MiB. Max video size is
+ * LINKEDIN_VIDEO_MAX_BYTES (5 GB).
+ * https://learn.microsoft.com/en-us/linkedin/marketing/community-management/shares/vector-asset-api
+ */
+export const LINKEDIN_SINGLE_UPLOAD_MAX_BYTES = 190_000_000;

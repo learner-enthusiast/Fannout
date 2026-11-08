@@ -13,7 +13,8 @@
     "check-types": "turbo run check-types",
     "test": "turbo run test",
     "docs:agent": "pnpm --filter @repo/api exec dotenv -e ../../.env -- tsx ../../scripts/generate-agent-docs.ts",
-    "docs:agent:check": "pnpm --filter @repo/api exec dotenv -e ../../.env -- tsx ../../scripts/generate-agent-docs.ts --check"
+    "docs:agent:check": "pnpm --filter @repo/api exec dotenv -e ../../.env -- tsx ../../scripts/generate-agent-docs.ts --check",
+    "youtube:stuck": "pnpm --filter @repo/api exec dotenv -e ../../.env -- tsx ../../scripts/youtube-stuck-uploads.ts"
   },
   "devDependencies": {
     "prettier": "^3.7.4",

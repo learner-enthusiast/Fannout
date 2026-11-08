@@ -3,6 +3,7 @@ import {
   LinkedInProvider,
   ThreadsProvider,
   XProvider,
+  YouTubeAnalyticsProvider,
   YouTubeProvider,
   type AnySocialProvider,
   type BaseProviderConfig,
@@ -104,7 +105,25 @@ export function createProviderFactory(deps: ProviderFactoryDeps) {
     }
   }
 
-  return { createProviderForConnection };
+  /**
+   * YouTube Analytics API client for a YouTube connection (analytics sync only).
+   * Same token source as the Data API provider; needs yt-analytics.readonly.
+   */
+  async function createYouTubeAnalyticsForConnection(input: CreateProviderInput): Promise<YouTubeAnalyticsProvider> {
+    const { userId, connectionId } = CreateProviderInputSchema.parse(input);
+    const row = await deps.getConnection(userId, connectionId);
+    if (!row || row.provider !== "YOUTUBE") {
+      throw new AppError({ code: ErrorCode.NOT_FOUND, message: "YouTube connection not found" });
+    }
+    if (!row.isActive || !row.accessTokenEncrypted) throw reconnectRequired();
+    return new YouTubeAnalyticsProvider({
+      ...deps.providerOptions,
+      accessToken: connectionTokenSource(deps, userId, connectionId),
+      channelId: row.providerAccountId,
+    });
+  }
+
+  return { createProviderForConnection, createYouTubeAnalyticsForConnection };
 }
 
 export type ProviderFactory = ReturnType<typeof createProviderFactory>;

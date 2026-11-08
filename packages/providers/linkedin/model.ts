@@ -6,7 +6,6 @@ import {
   LINKEDIN_MEDIA_FINDER_MAX_COUNT,
   LINKEDIN_MULTI_IMAGE,
   LINKEDIN_UGC_MAX_IMAGES,
-  LINKEDIN_UGC_VIDEO_MAX_BYTES,
   LINKEDIN_POLL,
   LINKEDIN_POSTS_FINDER_MAX_COUNT,
   LINKEDIN_VIDEO_MAX_BYTES,
@@ -718,6 +717,63 @@ export const RegisterUploadResponseSchema = z.looseObject({
 });
 export type RegisterUploadResponse = z.infer<typeof RegisterUploadResponseSchema>;
 
+/** registerUpload for a video with an explicit mechanism + fileSize (multipart needs both). */
+export const RegisterVideoUploadInputSchema = z.object({
+  owner: PersonUrnSchema,
+  fileSize: z.number().int().positive(),
+  mechanism: z.enum(["SINGLE_REQUEST_UPLOAD", "MULTIPART_UPLOAD"]),
+});
+export type RegisterVideoUploadInput = z.input<typeof RegisterVideoUploadInputSchema>;
+
+const SingleUploadMechanismSchema = z.looseObject({
+  uploadUrl: z.url(),
+  headers: z.record(z.string(), z.string()).optional(),
+});
+const MultipartUploadMechanismSchema = z.looseObject({
+  partUploadRequests: z
+    .array(
+      z.looseObject({
+        url: z.url(),
+        byteRange: z.looseObject({ firstByte: z.number().int().nonnegative(), lastByte: z.number().int().nonnegative() }),
+        headers: z.record(z.string(), z.string()).optional(),
+        urlExpiresAt: z.number().optional(),
+      }),
+    )
+    .min(1),
+  // Passed back verbatim to completeMultiPartUpload. The v2 API can return it empty ("").
+  metadata: z.string().default(""),
+});
+
+/** Either MediaUploadHttpRequest (single PUT) or MultipartUpload (ranged part URLs + metadata). */
+export const RegisterVideoUploadResponseSchema = z.looseObject({
+  value: z.looseObject({
+    uploadMechanism: z
+      .looseObject({
+        "com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest": SingleUploadMechanismSchema.optional(),
+        "com.linkedin.digitalmedia.uploading.MultipartUpload": MultipartUploadMechanismSchema.optional(),
+      })
+      .refine(
+        (m) => m["com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest"] || m["com.linkedin.digitalmedia.uploading.MultipartUpload"],
+        "Unknown LinkedIn upload mechanism",
+      ),
+    mediaArtifact: z.string().optional(),
+    asset: DigitalMediaAssetUrnSchema,
+  }),
+});
+
+export type RegisteredVideoUpload = {
+  asset: string;
+  mediaArtifact: string | null;
+  upload:
+    | { kind: "single"; url: string; headers: Record<string, string> }
+    | {
+        kind: "multipart";
+        metadata: string;
+        /** 1-based, in byte order; `start`/`end` are LinkedIn's byteRange (inclusive). */
+        parts: { partNumber: number; url: string; start: number; end: number; headers: Record<string, string>; urlExpiresAt: number | null }[];
+      };
+};
+
 /** GET /v2/assets/{id} — processing state per recipe. */
 export const UgcAssetStatusSchema = z.enum(["NEW", "PROCESSING", "AVAILABLE", "WAITING_UPLOAD", "CLIENT_ERROR", "PROCESSING_FAILED"]);
 export const UgcAssetSchema = z.looseObject({
@@ -790,7 +846,9 @@ export const LINKEDIN_COMMENTARY_MAX = 3000;
 
 /**
  * Capabilities with the Share on LinkedIn (UGC) API — the default. It has no
- * custom video thumbnail, ≤9 images per post and single-request uploads.
+ * custom video thumbnail and ≤9 images per post. Videos up to 5 GB: single
+ * upload below 200 MB, multipart above (200 MB is the single-upload limit,
+ * not a size limit).
  */
 export const LINKEDIN_COMPOSE: ComposeCapabilities = {
   supportsVideo: true,
@@ -798,7 +856,7 @@ export const LINKEDIN_COMPOSE: ComposeCapabilities = {
   maxPhotos: LINKEDIN_UGC_MAX_IMAGES,
   minCarousel: 1,
   supportsThumbnail: false,
-  mediaRules: { maxVideoBytes: LINKEDIN_UGC_VIDEO_MAX_BYTES, minVideoSeconds: 3, maxVideoSeconds: 30 * 60 },
+  mediaRules: { maxVideoBytes: LINKEDIN_VIDEO_MAX_BYTES, minVideoSeconds: 3, maxVideoSeconds: 30 * 60 },
   // DELETE /v2/ugcPosts/{urn} (idempotent; no update) — https://learn.microsoft.com/en-us/linkedin/compliance/integrations/shares/ugc-post-api
   supportsDelete: true,
   deleteNote: "Deletes the post from your LinkedIn profile.",

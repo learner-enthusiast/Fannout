@@ -9,7 +9,7 @@ import {
   type RepeatOptions,
   type WorkerOptions,
 } from "bullmq";
-import type { QueueName, QueuePayloads } from "./queues";
+import { QUEUE_NAMES, type QueueName, type QueuePayloads } from "./queues";
 
 export * from "./queues";
 export type { Job, JobsOptions, Processor } from "bullmq";
@@ -167,4 +167,9 @@ export async function closeBullMQ(): Promise<void> {
     queueConnection = undefined;
     await connection.quit();
   }
+}
+
+/** Wait until every registered queue's Redis connection is ready. */
+export async function checkBullMQConnection(): Promise<void> {
+  await Promise.all(Object.values(QUEUE_NAMES).map((name) => rawQueue(name).waitUntilReady()));
 }

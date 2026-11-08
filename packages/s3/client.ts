@@ -1,4 +1,4 @@
-import { S3Client, type S3ClientConfig } from "@aws-sdk/client-s3";
+import { HeadBucketCommand, S3Client, type S3ClientConfig } from "@aws-sdk/client-s3";
 import { env } from "./env";
 
 function clientConfig(endpoint: string | undefined): S3ClientConfig {
@@ -49,4 +49,9 @@ export function closeS3(): void {
   publicClient?.destroy();
   client = undefined;
   publicClient = undefined;
+}
+
+/** HEAD the default bucket. Throws if S3 is unreachable, credentials are wrong or the bucket is missing. */
+export async function checkS3Connection(): Promise<void> {
+  await getS3Client().send(new HeadBucketCommand({ Bucket: env.S3_BUCKET }));
 }

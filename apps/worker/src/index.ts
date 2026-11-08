@@ -1,7 +1,17 @@
-import { closeBullMQ, createWorker, scheduleJob, upsertRecurringJob, type Job, type QueuePayloads } from "@repo/bullmq";
+import {
+  checkBullMQConnection,
+  closeBullMQ,
+  createWorker,
+  scheduleJob,
+  upsertRecurringJob,
+  type Job,
+  type QueuePayloads,
+} from "@repo/bullmq";
+import { checkDatabaseConnection } from "@repo/database";
 import { schedulingEffects } from "@repo/inngest";
 import { logger } from "@repo/logger";
-import { closeRedis } from "@repo/redis";
+import { checkRedisConnection, closeRedis } from "@repo/redis";
+import { waitForDependencies } from "@repo/services/health";
 import { handoff, sweep } from "@repo/services/scheduling";
 
 /**
@@ -30,6 +40,13 @@ async function processJob(job: Job<QueuePayloads[typeof QUEUE]>) {
 }
 
 async function main() {
+  // Jobs touch Postgres (handoff/sweep) and Redis (BullMQ); don't pull jobs until both answer.
+  await waitForDependencies([
+    { name: "postgres", check: checkDatabaseConnection },
+    { name: "redis", check: checkRedisConnection },
+    { name: "bullmq", check: checkBullMQConnection },
+  ]);
+
   const worker = createWorker(QUEUE, processJob, { concurrency: 10 });
   await worker.waitUntilReady();
 

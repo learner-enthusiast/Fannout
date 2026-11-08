@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "@repo/bullmq": "workspace:*",
+    "@repo/database": "workspace:*",
     "@repo/inngest": "workspace:*",
     "@repo/logger": "workspace:*",
     "@repo/redis": "workspace:*",

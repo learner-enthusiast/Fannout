@@ -1,4 +1,5 @@
 export {
+  checkS3Connection,
   closeS3,
   defaultBucket,
   defaultRegion,

@@ -212,7 +212,11 @@ export class HttpClient {
         provider: this.options.provider,
         code: "INVALID_RESPONSE",
         status: response.status,
-        message: `Unexpected ${this.options.provider} response`,
+        // Paths + issue codes only (never values: responses can carry signed URLs).
+        message: `Unexpected ${this.options.provider} response (${parsed.error.issues
+          .slice(0, 3)
+          .map((i) => `${i.path.join(".") || "(root)"}: ${i.code}`)
+          .join("; ")})`,
         details: parsed.error.issues,
       });
     }

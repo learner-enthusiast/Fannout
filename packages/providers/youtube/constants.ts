@@ -19,3 +19,9 @@ export const YOUTUBE_SCOPES = {
   partner: "https://www.googleapis.com/auth/youtubepartner",
   channelMemberships: "https://www.googleapis.com/auth/youtube.channel-memberships.creator",
 } as const;
+
+/**
+ * Resumable-upload chunk size. Must be a multiple of 256 KiB (all chunks but
+ * the last). https://developers.google.com/youtube/v3/guides/using_resumable_upload_protocol
+ */
+export const YOUTUBE_UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024;

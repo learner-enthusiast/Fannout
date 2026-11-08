@@ -12,7 +12,7 @@ import {
   type ProviderAccount,
 } from "../common/provider.types";
 import { computeRetryDelayMs, parseRateLimitHeaders } from "../common/rate-limit";
-import { X_API_BASE_URL, X_MEDIA_CHUNK_BYTES } from "./constants";
+import { X_API_BASE_URL, X_MEDIA_CHUNK_BYTES, X_MEDIA_REQUEST_TIMEOUT_MS } from "./constants";
 import {
   XActionResultSchema,
   XAppendMediaUploadInputSchema,
@@ -180,7 +180,8 @@ export class XProvider extends BaseProvider<XProviderConfig> {
             method,
             headers,
             body: options.body as BodyInit | undefined,
-            signal: options.signal ?? AbortSignal.timeout(timeoutMs),
+            // One media segment (base64 in JSON, ~5.6 MB for 4 MiB) needs more than the 30 s default.
+            signal: options.signal ?? AbortSignal.timeout(url.includes("/2/media/upload") ? Math.max(timeoutMs, X_MEDIA_REQUEST_TIMEOUT_MS) : timeoutMs),
           });
         };
         let refreshed = false;
@@ -221,6 +222,14 @@ export class XProvider extends BaseProvider<XProviderConfig> {
         rateLimit: parseRateLimitHeaders(error.headers),
         details: error.data,
       });
+    }
+    // fetch aborted (timeout) or failed (connection drop): unknown outcome, safe to retry for idempotent work.
+    const root = error instanceof Error && error.cause instanceof Error ? error.cause : error;
+    if (root instanceof Error && (root.name === "TimeoutError" || root.name === "AbortError")) {
+      return new ProviderError({ provider: this.name, code: "TIMEOUT", message: "X request timed out", retryable: true, cause: error });
+    }
+    if (root instanceof TypeError) {
+      return new ProviderError({ provider: this.name, code: "NETWORK", message: "Network request failed", retryable: true, cause: error });
     }
     return new ProviderError({ provider: this.name, code: "PROVIDER_ERROR", message: "X request failed", cause: error });
   }

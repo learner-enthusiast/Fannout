@@ -41,3 +41,9 @@ export async function closeRedis(): Promise<void> {
   shared = undefined;
   await client.quit();
 }
+
+/** PING the shared client. Throws if Redis is unreachable. */
+export async function checkRedisConnection(): Promise<void> {
+  const reply = await getRedis().ping();
+  if (reply !== "PONG") throw new Error(`Unexpected Redis PING reply: ${reply}`);
+}

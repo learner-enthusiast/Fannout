@@ -27,6 +27,12 @@ importers:
       '@clerk/express':
         specifier: 2.1.86
         version: 2.1.86(express@5.2.1)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      '@repo/bullmq':
+        specifier: workspace:^
+        version: link:../../packages/bullmq
+      '@repo/database':
+        specifier: workspace:^
+        version: link:../../packages/database
       '@repo/errors':
         specifier: workspace:^
         version: link:../../packages/errors
@@ -36,6 +42,12 @@ importers:
       '@repo/logger':
         specifier: workspace:*
         version: link:../../packages/logger
+      '@repo/redis':
+        specifier: workspace:^
+        version: link:../../packages/redis
+      '@repo/s3':
+        specifier: workspace:^
+        version: link:../../packages/s3
       '@repo/services':
         specifier: workspace:^
         version: link:../../packages/services
@@ -317,6 +329,9 @@ importers:
       '@repo/bullmq':
         specifier: workspace:*
         version: link:../../packages/bullmq
+      '@repo/database':
+        specifier: workspace:*
+        version: link:../../packages/database
       '@repo/inngest':
         specifier: workspace:*
         version: link:../../packages/inngest

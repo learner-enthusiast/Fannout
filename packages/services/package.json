@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "lint": "eslint env.ts common lib users social-connections media media-folders search publishing post-actions api-keys rate-limit ai-content notifications posts post-media scheduling oauth oauth-transactions provider-factory test",
+    "lint": "eslint env.ts common lib users social-connections media media-folders search publishing post-actions api-keys rate-limit ai-content notifications posts post-media scheduling oauth oauth-transactions provider-factory health test",
     "test": "dotenv -e ../../.env -- tsx --test test/*.test.ts"
   },
   "devDependencies": {

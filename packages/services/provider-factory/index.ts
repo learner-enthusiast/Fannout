@@ -9,6 +9,6 @@ export const providerFactory = createProviderFactory({
   facebook: { appSecret: env.FACEBOOK_CLIENT_SECRET, graphVersion: env.FACEBOOK_GRAPH_VERSION },
 });
 
-export const { createProviderForConnection } = providerFactory;
+export const { createProviderForConnection, createYouTubeAnalyticsForConnection } = providerFactory;
 export { createProviderFactory, CreateProviderInputSchema } from "./factory";
 export type { CreateProviderInput, ProviderFactory, ProviderFactoryDeps } from "./factory";

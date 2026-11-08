@@ -63,6 +63,8 @@ export function AccountCard({
     copySources,
     onChange,
     onPickThumbnail,
+    thumbnailInherited = false,
+    onResetThumbnail,
     onOverride,
     onCopyFrom,
     aiFor,
@@ -81,6 +83,10 @@ export function AccountCard({
     copySources: { id: string; name: string }[]
     onChange: (field: string, value: unknown) => void
     onPickThumbnail: () => void
+    /** Showing the shared "all accounts" thumbnail (no pick of its own). */
+    thumbnailInherited?: boolean
+    /** Drop this card's own thumbnail and go back to the shared one / platform default. */
+    onResetThumbnail?: () => void
     onOverride: (ids: string[] | undefined) => void
     onCopyFrom: (sourceId: string) => void
     /** AI state for a field (undefined = no AI for this card). */
@@ -188,10 +194,18 @@ export function AccountCard({
                         </span>
                         <div className="flex min-w-0 flex-1 flex-col gap-1">
                             <span className="text-label text-foreground">Thumbnail</span>
-                            <span className="truncate text-meta">{thumbnail ? thumbnail.name : 'Platform default (auto-generated)'}</span>
+                            <span className="truncate text-meta">
+                                {thumbnail ? thumbnail.name : 'Platform default (auto-generated)'}
+                                {thumbnailInherited ? ' · same as all accounts' : ''}
+                            </span>
                         </div>
+                        {onResetThumbnail ? (
+                            <Button variant="ghost" size="sm" onClick={onResetThumbnail}>
+                                Use Default
+                            </Button>
+                        ) : null}
                         <Button variant="secondary" size="sm" leftIcon={<ImageIcon aria-hidden />} onClick={onPickThumbnail}>
-                            {thumbnail ? 'Change' : 'Pick Thumbnail'}
+                            {thumbnailInherited ? 'Pick Own' : thumbnail ? 'Change' : 'Pick Thumbnail'}
                         </Button>
                     </div>
                 ) : null}

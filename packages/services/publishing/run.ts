@@ -13,6 +13,7 @@ import { MediaRowSchema, type MediaRow } from "../media/model";
 import { createProviderForConnection } from "../provider-factory";
 import { SocialConnectionRowSchema } from "../social-connections/model";
 import { updateSocialConnection } from "../social-connections";
+import { PermanentPublishError } from "./errors";
 import { PostConfigSchema, TERMINAL_STATUSES } from "./model";
 import { PLATFORMS } from "./platforms";
 import { failSchedule } from "../scheduling";
@@ -20,6 +21,7 @@ import { FacebookPublishError, MISSING_VIDEO_PERMISSION_MESSAGE, facebookPublish
 import { LINKEDIN_MISSING_SHARE_MESSAGE, LinkedInPublishError, linkedinPublisher } from "./publishers/linkedin";
 import { threadsPublisher } from "./publishers/threads";
 import type { PublishContext, PublishOutcome, Publisher } from "./publishers/types";
+import type { PrepareStep } from "./upload/progress";
 import { xPublisher } from "./publishers/x";
 import { youtubePublisher } from "./publishers/youtube";
 
@@ -56,14 +58,7 @@ export function classifyPublishError(error: unknown): { kind: ErrorKind; code: s
   return { kind: "transient", code: "UNKNOWN", message };
 }
 
-export class PermanentPublishError extends Error {
-  constructor(
-    readonly code: string,
-    message: string,
-  ) {
-    super(message);
-  }
-}
+export { PermanentPublishError };
 
 async function loadPost(postId: string) {
   const [row] = await db.select().from(posts).where(eq(posts.id, postId)).limit(1);
@@ -147,7 +142,7 @@ async function loadMedia(postId: string): Promise<{ media: MediaRow[]; thumbnail
 
 export type PublishPhase = "prepare" | "finalize";
 
-function publisherFor(provider: unknown): { run: (phase: PublishPhase, ctx: PublishContext) => Promise<PublishOutcome | void> } | null {
+function publisherFor(provider: unknown): { run: (phase: PublishPhase, ctx: PublishContext) => Promise<PublishOutcome | PrepareStep | void> } | null {
   const wrap = <P>(publisher: Publisher<P>, p: P) => ({
     run: (phase: PublishPhase, ctx: PublishContext) => (phase === "prepare" ? publisher.prepare(p, ctx) : publisher.finalize(p, ctx)),
   });
@@ -167,9 +162,9 @@ function publisherFor(provider: unknown): { run: (phase: PublishPhase, ctx: Publ
  * so Inngest retries — resume data in posts.config.progress keeps retries
  * from re-uploading.
  */
-export async function runPublishPhase(postId: string, phase: "prepare", options?: { scheduled?: boolean }): Promise<null>;
+export async function runPublishPhase(postId: string, phase: "prepare", options?: { scheduled?: boolean }): Promise<PrepareStep>;
 export async function runPublishPhase(postId: string, phase: "finalize", options?: { scheduled?: boolean }): Promise<PublishOutcome>;
-export async function runPublishPhase(postId: string, phase: PublishPhase, options: { scheduled?: boolean } = {}): Promise<PublishOutcome | null> {
+export async function runPublishPhase(postId: string, phase: PublishPhase, options: { scheduled?: boolean } = {}): Promise<PublishOutcome | PrepareStep> {
   const post = await loadPost(postId);
   if (!post) throw new PermanentPublishError("NOT_FOUND", "Post not found");
   const config = PostConfigSchema.parse(post.config);
@@ -185,6 +180,7 @@ export async function runPublishPhase(postId: string, phase: PublishPhase, optio
     const input = PLATFORMS[config.platform].schema.parse(config.input) as Record<string, unknown>;
     const { media: items, thumbnail } = await loadMedia(post.id);
     const ctx: PublishContext = {
+      postId: post.id,
       userId: post.userId,
       connection,
       input,
@@ -203,8 +199,9 @@ export async function runPublishPhase(postId: string, phase: PublishPhase, optio
     if (!publisher) throw new PermanentPublishError("UNSUPPORTED", "This platform can't be published to yet");
 
     if (phase === "prepare") {
-      await publisher.run("prepare", ctx);
-      return null;
+      // One unit of work per call (a chunk group or a poll); void = nothing more to prepare.
+      const step = (await publisher.run("prepare", ctx)) as PrepareStep | void;
+      return step ?? { done: true };
     }
     const outcome = (await publisher.run("finalize", ctx)) as PublishOutcome;
 

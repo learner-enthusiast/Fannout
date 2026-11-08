@@ -1,5 +1,7 @@
 import { readComposeMeta, type ComposeFieldMeta } from "@repo/providers";
 import { z } from "zod";
+import { ANALYTICS_CAPABILITIES } from "../analytics/capabilities";
+import { AnalyticsCapabilitySchema } from "../analytics/model";
 import { PLATFORMS, type Platform } from "./platforms";
 
 export const ComposeFieldSchema = z.object({
@@ -46,6 +48,7 @@ export const PlatformCapabilitiesSchema = z.object({
     requiresPublicUrl: z.boolean().optional().describe("The platform fetches media from a public URL."),
     billed: z.boolean().optional().describe("The platform bills API usage for posting."),
   }).describe("Media limits checked by POST /posts/validate."),
+  analytics: AnalyticsCapabilitySchema.describe("Analytics Fannout syncs for this platform (dashboard)."),
 });
 export type PlatformCapabilities = z.infer<typeof PlatformCapabilitiesSchema>;
 
@@ -66,6 +69,7 @@ export function platformCapabilities(platform: Platform): PlatformCapabilities {
     label: definition.label,
     ...definition.capabilities,
     fields: describeFields(definition.schema),
+    analytics: ANALYTICS_CAPABILITIES[platform],
   };
 }
 

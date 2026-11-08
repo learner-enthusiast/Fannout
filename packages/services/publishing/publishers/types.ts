@@ -1,8 +1,10 @@
+import type { PrepareStep } from "../upload/progress";
 import type { MediaRow } from "../../media/model";
 import type { SocialConnectionRow } from "../../social-connections/model";
 import type { ComposeMediaType } from "../model";
 
 export type PublishContext = {
+  postId: string;
   userId: string;
   connection: SocialConnectionRow;
   /** Already validated with the platform's compose schema. */
@@ -28,6 +30,10 @@ export type PublishOutcome = { externalPostId: string; postUrl: string | null };
  * use a no-op prepare. Instant posts run both back to back.
  */
 export type Publisher<P> = {
-  prepare(provider: P, ctx: PublishContext): Promise<void>;
+  /**
+   * One unit of prepare work. Large uploads return { done: false, next } after
+   * each chunk group / poll so every unit is its own Inngest step; void = done.
+   */
+  prepare(provider: P, ctx: PublishContext): Promise<PrepareStep | void>;
   finalize(provider: P, ctx: PublishContext): Promise<PublishOutcome>;
 };

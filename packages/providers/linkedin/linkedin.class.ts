@@ -4,6 +4,7 @@ import { HttpClient, type HttpRequest } from "../common/http-client";
 import { mediaSize, openMediaStream, readAll, readChunks, toBlob, type MediaSource } from "../common/media";
 import { nextOffsetCursor, type Page } from "../common/pagination";
 import { ProviderError } from "../common/provider-error";
+import { sendUploadRequest, uploadResponseError } from "../common/upload-request";
 import type { BaseProviderConfig, ProviderAccount } from "../common/provider.types";
 import {
   LINKEDIN_API_BASE_URL,
@@ -36,6 +37,10 @@ import {
   DocumentUrnSchema,
   FinalizeVideoUploadInputSchema,
   FindMemberOrganizationAclsInputSchema,
+  RegisterVideoUploadInputSchema,
+  RegisterVideoUploadResponseSchema,
+  type RegisterVideoUploadInput,
+  type RegisteredVideoUpload,
   FindOrganizationAclsInputSchema,
   FindOrganizationByVanityNameInputSchema,
   FindOrganizationsByParentInputSchema,
@@ -535,6 +540,103 @@ export class LinkedInProvider extends BaseProvider<LinkedInProviderConfig> {
     const registered = await this.registerUpload(rest);
     await this.uploadAssetBinary(registered.uploadUrl, source, registered.headers);
     return { asset: registered.asset };
+  }
+
+  // ---- large video upload (resumable from the caller: register → parts → complete) ----
+  // https://learn.microsoft.com/en-us/linkedin/marketing/community-management/shares/vector-asset-api
+
+  /** registerUpload for a feedshare video with fileSize + mechanism. Parses BOTH response shapes. */
+  async registerVideoUpload(input: RegisterVideoUploadInput): Promise<RegisteredVideoUpload> {
+    const v = this.validate(RegisterVideoUploadInputSchema, input, "registerVideoUpload");
+    const { data } = await this.http.json(
+      {
+        method: "POST",
+        url: `${LINKEDIN_V2_BASE_URL}/assets`,
+        query: { action: "registerUpload" },
+        headers: this.v2Headers,
+        body: {
+          kind: "json",
+          value: {
+            registerUploadRequest: {
+              recipes: ["urn:li:digitalmediaRecipe:feedshare-video"],
+              owner: v.owner,
+              serviceRelationships: [{ relationshipType: "OWNER", identifier: "urn:li:userGeneratedContent" }],
+              supportedUploadMechanism: [v.mechanism],
+              fileSize: v.fileSize,
+            },
+          },
+        },
+      },
+      RegisterVideoUploadResponseSchema,
+    );
+    const mechanism = data.value.uploadMechanism;
+    const multipart = mechanism["com.linkedin.digitalmedia.uploading.MultipartUpload"];
+    const single = mechanism["com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest"];
+    const base = { asset: data.value.asset, mediaArtifact: data.value.mediaArtifact ?? null };
+    if (multipart) {
+      return {
+        ...base,
+        upload: {
+          kind: "multipart",
+          metadata: multipart.metadata,
+          parts: multipart.partUploadRequests
+            .map((p) => ({
+              url: p.url,
+              start: p.byteRange.firstByte,
+              end: p.byteRange.lastByte,
+              headers: p.headers ?? {},
+              urlExpiresAt: p.urlExpiresAt ?? null,
+            }))
+            .sort((a, b) => a.start - b.start)
+            .map((p, i) => ({ ...p, partNumber: i + 1 })),
+        },
+      };
+    }
+    return { ...base, upload: { kind: "single", url: single!.uploadUrl, headers: single!.headers ?? {} } };
+  }
+
+  /**
+   * PUT one video part (or the whole file for single upload). Video upload URLs
+   * must NOT carry the OAuth token (per docs). Returns the ETag (multipart).
+   */
+  async uploadVideoBytes(url: string, data: Uint8Array, headers: Record<string, string>, timeoutMs?: number): Promise<string | null> {
+    const response = await sendUploadRequest({
+      provider: this.name,
+      method: "PUT",
+      url: this.validate(z.url(), url, "uploadVideoBytes"),
+      // LinkedIn returns e.g. "Content-Type"; lower-case keys so nothing is sent twice.
+      headers: Object.fromEntries(
+        Object.entries({ "content-type": "application/octet-stream", ...headers }).map(([k, v]) => [k.toLowerCase(), v]),
+      ),
+      body: data as Uint8Array<ArrayBuffer>,
+      timeoutMs,
+      fetch: this.config.fetch,
+    });
+    if (!response.ok) throw await uploadResponseError(this.name, response, "LinkedIn video upload");
+    await response.body?.cancel();
+    return response.headers.get("etag");
+  }
+
+  /** POST /v2/assets?action=completeMultiPartUpload with the registration metadata and ordered ETags. */
+  async completeMultiPartUpload(input: { mediaArtifact: string; metadata: string; etags: string[] }): Promise<void> {
+    await this.http.send({
+      method: "POST",
+      url: `${LINKEDIN_V2_BASE_URL}/assets`,
+      query: { action: "completeMultiPartUpload" },
+      headers: this.v2Headers,
+      body: {
+        kind: "json",
+        value: {
+          completeMultipartUploadRequest: {
+            mediaArtifact: input.mediaArtifact,
+            metadata: input.metadata,
+            partUploadResponses: input.etags.map((etag) => ({ headers: { ETag: etag }, httpStatusCode: 200 })),
+          },
+        },
+      },
+      // Completing twice with the same parts is harmless; a lost response must be retryable.
+      retry: true,
+    });
   }
 
   /** POST /v2/ugcPosts — text, article, image(s) or video share as the member. Id from x-restli-id. */

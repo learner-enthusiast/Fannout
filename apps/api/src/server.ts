@@ -17,6 +17,8 @@ import { createDefaultOAuthRouter } from "./routes/oauth";
 import { inngestHandler } from "@repo/inngest";
 import { loggableUrl } from "./utils/safe-url";
 import { agentGuide } from "./generated/agent-guide";
+import { probeDependencies } from "@repo/services/health";
+import { API_DEPENDENCIES } from "./startup/check-connections";
 
 export const app = express();
 const openApiDocument = generateOpenApiDocument(serverRouter, {
@@ -45,6 +47,14 @@ app.use(
 );
 app.post("/webhooks/clerk", express.raw({ type: "application/json" }), clerkWebhookHandler);
 // Inngest sends large step payloads; give it its own parser ahead of the global 100kb one.
+// Inngest holds the connection open while one step runs. Node's requestTimeout/headersTimeout only
+// cover *receiving* the (small) request, and the socket idle timeout defaults to off — but a step
+// can be silent for minutes while it uploads, so make "no idle timeout" explicit for this route
+// only. Uploads must not depend on this: they're chunked into ≤ ~60 s steps (publishing/upload).
+app.use("/api/inngest", (req, _res, next) => {
+  req.setTimeout(0);
+  next();
+});
 app.use("/api/inngest", express.json({ limit: "10mb" }), inngestHandler);
 app.use(
   helmet({
@@ -82,8 +92,16 @@ app.get("/", (req, res) => {
   return res.json({ message: "Fannout API is up and running..." });
 });
 
-app.get("/health", (req, res) => {
-  return res.json({ message: "Fannout API is healthy", healthy: true });
+// Liveness + readiness: 200 when every dependency answers, 503 (with which one failed) otherwise.
+app.get("/health", async (_req, res) => {
+  const dependencies = await probeDependencies(API_DEPENDENCIES);
+  const healthy = dependencies.every((d) => d.healthy);
+  res.set("Cache-Control", "no-store");
+  return res.status(healthy ? 200 : 503).json({
+    message: healthy ? "Fannout API is healthy" : "Fannout API is degraded",
+    healthy,
+    dependencies,
+  });
 });
 
 // Public, static agent discovery documents. The source is generated alongside

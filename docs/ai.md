@@ -4,7 +4,7 @@ Fannout lets a person prepare media once and fan it out to connected social plat
 Use this guide when acting through the HTTP API with a scoped personal API key.
 This document is the contract. Follow it exactly.
 
-Generated from code at 2061e28 on 2026-11-07. Do not edit generated sections by hand.
+Generated from code at ede26d7 on 2026-11-07. Do not edit generated sections by hand.
 
 ## Authentication
 
@@ -127,7 +127,7 @@ video: true; photos: true; max photos: 9; thumbnail: false; delete: true; edit: 
 
 - Delete note: Deletes the post from your LinkedIn profile.
 - Edit note: Share on LinkedIn has no edit endpoint. Delete and repost instead.
-- Media rules: maxVideoBytes=209715200, minVideoSeconds=3, maxVideoSeconds=1800
+- Media rules: maxVideoBytes=5368709120, minVideoSeconds=3, maxVideoSeconds=1800
 
 Fields for `targets[].input` when the account is LinkedIn:
 
