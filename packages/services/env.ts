@@ -53,14 +53,16 @@ const envSchema = z.object({
   GOOGLE_REDIRECT_URI: z.url().default("http://localhost:8000/api/oauth/youtube/callback"),
   YOUTUBE_SCOPES: z
     .string()
-    .default("openid email profile https://www.googleapis.com/auth/youtube.readonly"),
+    // yt-analytics.readonly: analytics dashboard (YouTube Analytics API). Reconnect to grant.
+    .default("openid email profile https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/yt-analytics.readonly"),
 
   FACEBOOK_CLIENT_ID: optional,
   FACEBOOK_CLIENT_SECRET: optional,
   FACEBOOK_REDIRECT_URI: z.url().default("http://localhost:8000/api/oauth/facebook/callback"),
   FACEBOOK_SCOPES: z
     .string()
-    .default("public_profile,pages_show_list,pages_read_engagement,pages_manage_posts,business_management"),
+    // read_insights + pages_read_engagement: analytics dashboard (Page insights). Reconnect to grant.
+    .default("public_profile,pages_show_list,pages_read_engagement,pages_manage_posts,business_management,read_insights"),
   FACEBOOK_GRAPH_VERSION: z
     .string()
     .regex(/^v\d+\.\d+$/)
@@ -71,7 +73,8 @@ const envSchema = z.object({
   /** Threads only accepts HTTPS redirect URIs (use a tunnel such as ngrok locally). */
   THREADS_REDIRECT_URI: z.url().default("http://localhost:8000/api/oauth/threads/callback"),
   /** threads_delete lets Fannout delete posts it published. */
-  THREADS_SCOPES: z.string().default("threads_basic,threads_content_publish,threads_delete"),
+  /** threads_manage_insights: analytics dashboard. */
+  THREADS_SCOPES: z.string().default("threads_basic,threads_content_publish,threads_delete,threads_manage_insights"),
 
   /** Scheduled posts: assumed upload speed to push platforms (Mbit/s) for the lead time. */
   SCHEDULE_UPLOAD_MBPS: z.coerce.number().positive().default(20),

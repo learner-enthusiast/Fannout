@@ -4,6 +4,7 @@ import { createNotificationFn, pruneNotifications } from "./functions/notificati
 import { namePostBatch, publishBatch, publishPost } from "./functions/publishing";
 import { generateContent } from "./functions/ai-content";
 import { deletePost, editPost } from "./functions/post-actions";
+import { analyticsAccountCron, analyticsAccountSync, analyticsPostCron, analyticsPostSync } from "./functions/analytics";
 
 /**
  * Every Inngest function served by the API. Define a function with
@@ -22,4 +23,8 @@ export const functions: InngestFunction.Any[] = [
   generateContent,
   deletePost,
   editPost,
+  analyticsAccountCron,
+  analyticsPostCron,
+  analyticsAccountSync,
+  analyticsPostSync,
 ];

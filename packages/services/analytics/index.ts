@@ -52,14 +52,15 @@ const RANGE_DAYS = { "7d": 7, "28d": 28, "90d": 90 } as const;
 const addDays = (date: string, days: number) => new Date(Date.parse(`${date}T00:00:00Z`) + days * DAY_MS).toISOString().slice(0, 10);
 const todayIn = (timeZone: string) => new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 
-export function resolveRange(range: Range, timeZone: string) {
+export function resolveRange(input: Range, timeZone: string) {
   let from: string;
   let to: string;
-  if (typeof range === "string") {
+  if (input.range !== "custom") {
     to = todayIn(timeZone);
-    from = addDays(to, -(RANGE_DAYS[range] - 1));
+    from = addDays(to, -(RANGE_DAYS[input.range] - 1));
   } else {
-    ({ from, to } = range);
+    if (!input.from || !input.to) return errors.badRequest("A custom range needs from and to");
+    ({ from, to } = { from: input.from, to: input.to });
     if (from > to) return errors.badRequest("from must be on or before to");
     if ((Date.parse(to) - Date.parse(from)) / DAY_MS > 365) return errors.badRequest("Custom ranges can span at most 366 days");
   }
@@ -234,7 +235,7 @@ const successRate = (c: { published: number; failed: number }) => (c.published +
 
 export async function analyticsOverview(userId: string, rawInput: OverviewInput): Promise<Overview> {
   const input = OverviewInputSchema.parse(rawInput);
-  const range = resolveRange(input.range, input.timeZone);
+  const range = resolveRange(input, input.timeZone);
   const conns = await userConnections(userId, input.connectionId);
   const ids = conns.map((c) => c.id);
   const platformOf = new Map(conns.map((c) => [c.id, c.platform]));
@@ -318,7 +319,7 @@ export async function analyticsOverview(userId: string, rawInput: OverviewInput)
     publishStats: { published: pubCur.published, failed: pubCur.failed, scheduled: scheduledCount, successRate: successRate(pubCur) },
     upcoming,
     recentFailures: failures,
-    availability: availability.map(({ state: _state, ...a }) => a),
+    availability: availability.map(({ state, ...a }) => (void state, a)),
   };
 }
 
@@ -377,7 +378,7 @@ const engagementSql = (m: ReturnType<typeof sql>) => sql`(case
 
 export async function analyticsTopPosts(userId: string, rawInput: TopPostsInput) {
   const input = TopPostsInputSchema.parse(rawInput);
-  const range = resolveRange(input.range, "UTC");
+  const range = resolveRange(input, "UTC");
   const conns = await userConnections(userId, input.connectionId);
   if (conns.length === 0) return { items: [], nextCursor: null };
   const ids = conns.map((c) => c.id);
@@ -489,7 +490,7 @@ export async function analyticsPostDetail(userId: string, postId: string) {
 
 export async function analyticsBestTimes(userId: string, rawInput: BestTimesInput) {
   const input = BestTimesInputSchema.parse(rawInput);
-  const range = resolveRange(input.range, input.timeZone);
+  const range = resolveRange(input, input.timeZone);
   const conns = await userConnections(userId, input.connectionId);
   const latest = await latestPostMetrics(userId, conns.map((c) => c.id), range.from, range.to, input.timeZone);
   const fmt = new Intl.DateTimeFormat("en-US", { timeZone: input.timeZone, weekday: "short", hour: "numeric", hourCycle: "h23" });

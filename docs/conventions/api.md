@@ -55,3 +55,21 @@ Mandatory for every tRPC procedure / REST route. Enforced by
   `.input()`, `.output()` and OpenAPI `meta`.
 - Every protected procedure declares its API-key scope (`scoped("…")`) and, if
   expensive, a rate-limit bucket (`.use(rateLimit("…"))`).
+
+## Analytics
+
+- Dashboards read **only** from Fannout's analytics tables (`analytics_account_daily`,
+  `analytics_post_snapshots`, `analytics_sync_state`) and our own `posts` /
+  `scheduled_posts`. Platform analytics APIs are called **only** in the Inngest sync jobs
+  (`packages/inngest/functions/analytics.ts` → `services/analytics/sync.ts`), never in a
+  request. `analytics.refresh` only queues a sync (1 per connection per 15 min).
+- Metrics are stored under the **normalized keys** in `services/analytics/model.ts`
+  (`METRIC_KEYS`). A metric a platform doesn't report is **absent** — never stored as 0 —
+  and the UI renders it as "—".
+- Adding a platform metric: map it in `services/analytics/platforms/<platform>.ts`
+  (add a normalized key to `METRIC_KEYS`/`MetricsSchema` only if none fits), list it in
+  `ANALYTICS_CAPABILITIES` (`services/analytics/capabilities.ts`), cite the doc URL in the
+  platform file, then run `pnpm docs:agent` and commit `docs/ai.md`.
+- A connection missing a scope in `requiredScopes` gets status `needs_reconnect` with no
+  API call. Auth/permission errors during sync set the analytics status only; they never
+  clear the connection's publishing tokens.

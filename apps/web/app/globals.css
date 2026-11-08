@@ -67,6 +67,15 @@
     --chart-4: #fbbf24;
     --chart-5: #f87171;
 
+    /* Per-platform series — reused palette tones (destructive, warning, primary-hover,
+     * success, accent, foreground), not brand-logo colours. */
+    --chart-youtube: #f87171;
+    --chart-instagram: #fbbf24;
+    --chart-facebook: #6264f0;
+    --chart-threads: #4ade80;
+    --chart-linkedin: #22d3ee;
+    --chart-x: #ececf4;
+
     --shadow-float:
         0 8px 24px -4px rgb(0 0 0 / 0.55), 0 2px 8px -2px rgb(0 0 0 / 0.4);
 }
@@ -115,6 +124,13 @@
     --chart-3: #166534;
     --chart-4: #92400e;
     --chart-5: #b91c1c;
+
+    --chart-youtube: #b91c1c;
+    --chart-instagram: #92400e;
+    --chart-facebook: #4338ca;
+    --chart-threads: #166534;
+    --chart-linkedin: #0e7490;
+    --chart-x: #1c1a16;
 
     --shadow-float:
         0 8px 24px -6px rgb(28 26 22 / 0.14),
@@ -172,6 +188,12 @@
     --color-chart-3: var(--chart-3);
     --color-chart-4: var(--chart-4);
     --color-chart-5: var(--chart-5);
+    --color-chart-youtube: var(--chart-youtube);
+    --color-chart-instagram: var(--chart-instagram);
+    --color-chart-facebook: var(--chart-facebook);
+    --color-chart-threads: var(--chart-threads);
+    --color-chart-linkedin: var(--chart-linkedin);
+    --color-chart-x: var(--chart-x);
 
     /* Radius: exactly two values. `rounded-control` / `rounded-surface` are
      * canonical; the stock scale is folded onto them so vendored shadcn

@@ -105,13 +105,13 @@ export type AnalyticsCapability = z.infer<typeof AnalyticsCapabilitySchema>;
 // ---------------------------------------------------------------------------
 
 const IsoDate = z.iso.date().describe("YYYY-MM-DD.");
-export const RangeSchema = z
-  .union([
-    z.enum(["7d", "28d", "90d"]).describe("Last 7, 28 or 90 days including today."),
-    z.object({ from: IsoDate, to: IsoDate }).describe("Custom inclusive date range (max 366 days)."),
-  ])
-  .describe("Date range.");
-export type Range = z.infer<typeof RangeSchema>;
+/** Flat query params (GET/OpenAPI): range=7d|28d|90d, or range=custom&from=…&to=… */
+export const RangeFields = {
+  range: z.enum(["7d", "28d", "90d", "custom"]).default("28d").describe("Last 7, 28 or 90 days including today, or custom (needs from + to)."),
+  from: IsoDate.optional().describe("Custom range start (YYYY-MM-DD, inclusive)."),
+  to: IsoDate.optional().describe("Custom range end (YYYY-MM-DD, inclusive; max 366 days)."),
+};
+export type Range = { range: "7d" | "28d" | "90d" | "custom"; from?: string; to?: string };
 
 const TimeZone = z
   .string()
@@ -129,14 +129,14 @@ const TimeZone = z
   .describe("IANA time zone for day buckets and best times (e.g. Asia/Kolkata).");
 
 export const OverviewInputSchema = z.object({
-  range: RangeSchema,
+  ...RangeFields,
   connectionId: z.uuid().optional().describe("Limit to one social connection; omit for all."),
   timeZone: TimeZone,
 });
 export type OverviewInput = z.input<typeof OverviewInputSchema>;
 
 export const TopPostsInputSchema = PaginationInputSchema.extend({
-  range: RangeSchema,
+  ...RangeFields,
   connectionId: z.uuid().optional().describe("Limit to one social connection; omit for all."),
   sortBy: z.enum(["views", "engagement", "likes"]).default("views").describe("Sort key (highest first)."),
 });

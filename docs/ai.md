@@ -4,7 +4,7 @@ Fannout lets a person prepare media once and fan it out to connected social plat
 Use this guide when acting through the HTTP API with a scoped personal API key.
 This document is the contract. Follow it exactly.
 
-Generated from code at ede26d7 on 2026-11-07. Do not edit generated sections by hand.
+Generated from code at 557fc55 on 2026-11-08. Do not edit generated sections by hand.
 
 ## Authentication
 
@@ -16,7 +16,7 @@ Send `Authorization: Bearer fn_live_…`. Create keys in **Settings → API keys
 
 | Scope | Operations |
 | --- | --- |
-| `posts:read` | GET /notifications<br>GET /notifications/unread-count<br>GET /posts/batches<br>GET /posts/batches/{batchId}<br>GET /posts/{postId} |
+| `posts:read` | GET /analytics/best-times<br>GET /analytics/overview<br>GET /analytics/posts/{postId}<br>GET /analytics/sync-status<br>GET /analytics/top-posts<br>GET /notifications<br>GET /notifications/unread-count<br>GET /posts/batches<br>GET /posts/batches/{batchId}<br>GET /posts/{postId}<br>POST /analytics/{connectionId}/refresh |
 | `posts:write` | PATCH /posts/{postId}<br>POST /notifications/read<br>POST /notifications/read-all<br>POST /posts/batches<br>POST /posts/validate<br>POST /posts/{postId}/cancel-schedule<br>POST /posts/{postId}/publish-now<br>POST /posts/{postId}/repost<br>POST /posts/{postId}/reschedule<br>POST /posts/{postId}/retry |
 | `posts:delete` | DELETE /posts/{postId}<br>POST /posts/batches/{batchId}/delete |
 | `media:read` | GET /folders<br>GET /folders/{folderId}<br>GET /folders/{folderId}/items<br>GET /media<br>GET /media/{mediaId}<br>GET /search |
@@ -329,6 +329,501 @@ curl -X GET "${API_PUBLIC_URL}/api/ai/generations/00000000-0000-4000-8000-000000
     "code": "x",
     "message": "x"
   }
+}
+```
+
+### Analytics · Best Times
+
+**GET /analytics/best-times** — Average engagement by weekday × hour
+
+- Required scope: `posts:read`
+- Rate limit: none beyond the API-key `api` bucket
+- Possible errors: `UNAUTHORIZED`, `FORBIDDEN`, `TOO_MANY_REQUESTS`, `VALIDATION`, `BAD_REQUEST`, `NOT_FOUND`, `CONFLICT`, `INTERNAL`
+
+#### Request
+
+| Field | Type | Required | Default | Constraints | Description |
+| --- | --- | --- | --- | --- | --- |
+| range | 7d \| 28d \| 90d \| custom | required | "28d" | enum: 7d, 28d, 90d, custom; default: "28d" | Last 7, 28 or 90 days including today, or custom (needs from + to). |
+| from | string (date) | optional | — | format date | Custom range start (YYYY-MM-DD, inclusive). |
+| to | string (date) | optional | — | format date | Custom range end (YYYY-MM-DD, inclusive; max 366 days). |
+| connectionId | string (uuid) | optional | — | format uuid | Limit to one social connection; omit for all. |
+| timeZone | string | required | "UTC" | min length 1; max length 64; default: "UTC" | IANA time zone for day buckets and best times (e.g. Asia/Kolkata). |
+
+#### Example request
+
+```bash
+curl -X GET "${API_PUBLIC_URL}/api/analytics/best-times" \
+  -H "Authorization: Bearer $FANNOUT_API_KEY" \
+  -H 'Content-Type: application/json'
+```
+
+#### Response
+
+| Field | Type | Default | Constraints | Description |
+| --- | --- | --- | --- | --- |
+| timeZone | string | — | — | Zone used for the buckets. |
+| cells[].weekday | integer | — | min 0; max 6 | 0 = Sunday. |
+| cells[].hour | integer | — | min 0; max 23 | Hour of day in timeZone. |
+| cells[].posts | integer | — | min -9007199254740991; max 9007199254740991 | Posts published in this slot. |
+| cells[].avgEngagement | number | — | — | Average engagement of those posts. |
+
+#### Example response
+
+```json
+{
+  "timeZone": "x",
+  "cells": [
+    {
+      "weekday": 0,
+      "hour": 0,
+      "posts": -9007199254740991,
+      "avgEngagement": 1
+    }
+  ]
+}
+```
+
+### Analytics · Overview
+
+**GET /analytics/overview** — Analytics overview (KPIs, daily series, publish stats)
+
+- Required scope: `posts:read`
+- Rate limit: none beyond the API-key `api` bucket
+- Possible errors: `UNAUTHORIZED`, `FORBIDDEN`, `TOO_MANY_REQUESTS`, `VALIDATION`, `BAD_REQUEST`, `NOT_FOUND`, `CONFLICT`, `INTERNAL`
+
+#### Request
+
+| Field | Type | Required | Default | Constraints | Description |
+| --- | --- | --- | --- | --- | --- |
+| range | 7d \| 28d \| 90d \| custom | required | "28d" | enum: 7d, 28d, 90d, custom; default: "28d" | Last 7, 28 or 90 days including today, or custom (needs from + to). |
+| from | string (date) | optional | — | format date | Custom range start (YYYY-MM-DD, inclusive). |
+| to | string (date) | optional | — | format date | Custom range end (YYYY-MM-DD, inclusive; max 366 days). |
+| connectionId | string (uuid) | optional | — | format uuid | Limit to one social connection; omit for all. |
+| timeZone | string | required | "UTC" | min length 1; max length 64; default: "UTC" | IANA time zone for day buckets and best times (e.g. Asia/Kolkata). |
+
+#### Example request
+
+```bash
+curl -X GET "${API_PUBLIC_URL}/api/analytics/overview" \
+  -H "Authorization: Bearer $FANNOUT_API_KEY" \
+  -H 'Content-Type: application/json'
+```
+
+#### Response
+
+| Field | Type | Default | Constraints | Description |
+| --- | --- | --- | --- | --- |
+| range.from | string (date) | — | format date | YYYY-MM-DD. |
+| range.to | string (date) | — | format date | YYYY-MM-DD. |
+| range.previousFrom | string (date) | — | format date | YYYY-MM-DD. |
+| range.previousTo | string (date) | — | format date | YYYY-MM-DD. |
+| kpis.views.current | number \| null | — | — | Value for the range; null = not reported. |
+| kpis.views.previous | number \| null | — | — | Value for the previous period of equal length; null = not reported. |
+| kpis.views.deltaPercent | number \| null | — | — | (current − previous) / previous × 100; null when either side is missing or previous is 0. |
+| kpis.engagement.current | number \| null | — | — | Value for the range; null = not reported. |
+| kpis.engagement.previous | number \| null | — | — | Value for the previous period of equal length; null = not reported. |
+| kpis.engagement.deltaPercent | number \| null | — | — | (current − previous) / previous × 100; null when either side is missing or previous is 0. |
+| kpis.engagementRate.current | number \| null | — | — | Value for the range; null = not reported. |
+| kpis.engagementRate.previous | number \| null | — | — | Value for the previous period of equal length; null = not reported. |
+| kpis.engagementRate.deltaPercent | number \| null | — | — | (current − previous) / previous × 100; null when either side is missing or previous is 0. |
+| kpis.engagementRateBasis | views \| impressions \| reach \| null | — | enum: views, impressions, reach | Denominator used for engagementRate. |
+| kpis.followersNet.current | number \| null | — | — | Value for the range; null = not reported. |
+| kpis.followersNet.previous | number \| null | — | — | Value for the previous period of equal length; null = not reported. |
+| kpis.followersNet.deltaPercent | number \| null | — | — | (current − previous) / previous × 100; null when either side is missing or previous is 0. |
+| kpis.postsPublished.current | number \| null | — | — | Value for the range; null = not reported. |
+| kpis.postsPublished.previous | number \| null | — | — | Value for the previous period of equal length; null = not reported. |
+| kpis.postsPublished.deltaPercent | number \| null | — | — | (current − previous) / previous × 100; null when either side is missing or previous is 0. |
+| kpis.publishSuccessRate.current | number \| null | — | — | Value for the range; null = not reported. |
+| kpis.publishSuccessRate.previous | number \| null | — | — | Value for the previous period of equal length; null = not reported. |
+| kpis.publishSuccessRate.deltaPercent | number \| null | — | — | (current − previous) / previous × 100; null when either side is missing or previous is 0. |
+| kpis.platform | object | — | — | Platform-specific tiles keyed by normalized metric (single-connection view only). |
+| series[].date | string (date) | — | format date | YYYY-MM-DD. |
+| series[].platform | youtube \| x \| linkedin \| threads \| facebook | — | enum: youtube, x, linkedin, threads, facebook | Platform key. |
+| series[].views | number \| null | — | — | Views that day; null = not reported. |
+| series[].engagement | number \| null | — | — | Engagement that day; null = not reported. |
+| series[].followersNet | number \| null | — | — | Followers gained − lost that day; null = not reported. |
+| byPlatform[].platform | youtube \| x \| linkedin \| threads \| facebook | — | enum: youtube, x, linkedin, threads, facebook | Platform key. |
+| byPlatform[].views | number \| null | — | — | Views in range. |
+| byPlatform[].engagement | number \| null | — | — | Engagement in range. |
+| publishStats.published | integer | — | min -9007199254740991; max 9007199254740991 | Published in range. |
+| publishStats.failed | integer | — | min -9007199254740991; max 9007199254740991 | Failed in range. |
+| publishStats.scheduled | integer | — | min -9007199254740991; max 9007199254740991 | Currently scheduled (upcoming). |
+| publishStats.successRate | number \| null | — | — | published ÷ (published + failed) × 100. |
+| upcoming[].postId | string (uuid) | — | format uuid | Post ID. |
+| upcoming[].name | string | — | — | Post name. |
+| upcoming[].platform | youtube \| x \| linkedin \| threads \| facebook \| null | — | enum: youtube, x, linkedin, threads, facebook | Platform key. |
+| upcoming[].scheduledAt | string | — | — | ISO time. |
+| recentFailures[].postId | string (uuid) | — | format uuid | Post ID. |
+| recentFailures[].name | string | — | — | Post name. |
+| recentFailures[].platform | youtube \| x \| linkedin \| threads \| facebook \| null | — | enum: youtube, x, linkedin, threads, facebook | Platform key. |
+| recentFailures[].errorMessage | string \| null | — | — | Why it failed. |
+| recentFailures[].failedAt | string | — | — | ISO time. |
+| availability[].connectionId | string (uuid) | — | format uuid | Social connection ID. |
+| availability[].platform | youtube \| x \| linkedin \| threads \| facebook | — | enum: youtube, x, linkedin, threads, facebook | Platform key. |
+| availability[].username | string \| null | — | — | Account handle. |
+| availability[].status | ready \| no_data \| needs_reconnect \| unsupported \| error | — | enum: ready, no_data, needs_reconnect, unsupported, error | ready = has data; no_data = waiting for the first sync; needs_reconnect = missing scope/token; unsupported = platform gives no analytics; error = last sync failed. |
+| availability[].missingScopes | string[] | — | — | Scopes to grant by reconnecting. |
+| availability[].lastSyncedAt | string \| null | — | — | Last successful sync (ISO). |
+| availability[].note | string \| null | — | — | Platform note. |
+
+#### Example response
+
+```json
+{
+  "range": {
+    "from": "2020-01-01",
+    "to": "2020-01-01",
+    "previousFrom": "2020-01-01",
+    "previousTo": "2020-01-01"
+  },
+  "kpis": {
+    "views": {
+      "current": 1,
+      "previous": 1,
+      "deltaPercent": 1
+    },
+    "engagement": {
+      "current": 1,
+      "previous": 1,
+      "deltaPercent": 1
+    },
+    "engagementRate": {
+      "current": 1,
+      "previous": 1,
+      "deltaPercent": 1
+    },
+    "engagementRateBasis": "views",
+    "followersNet": {
+      "current": 1,
+      "previous": 1,
+      "deltaPercent": 1
+    },
+    "postsPublished": {
+      "current": 1,
+      "previous": 1,
+      "deltaPercent": 1
+    },
+    "publishSuccessRate": {
+      "current": 1,
+      "previous": 1,
+      "deltaPercent": 1
+    },
+    "platform": {
+      "example": {
+        "current": 1,
+        "previous": 1,
+        "deltaPercent": 1
+      }
+    }
+  },
+  "series": [
+    {
+      "date": "2020-01-01",
+      "platform": "youtube",
+      "views": 1,
+      "engagement": 1,
+      "followersNet": 1
+    }
+  ],
+  "byPlatform": [
+    {
+      "platform": "youtube",
+      "views": 1,
+      "engagement": 1
+    }
+  ],
+  "publishStats": {
+    "published": -9007199254740991,
+    "failed": -9007199254740991,
+    "scheduled": -9007199254740991,
+    "successRate": 1
+  },
+  "upcoming": [
+    {
+      "postId": "00000000-0000-4000-8000-000000000000",
+      "name": "x",
+      "platform": "youtube",
+      "scheduledAt": "x"
+    }
+  ],
+  "recentFailures": [
+    {
+      "postId": "00000000-0000-4000-8000-000000000000",
+      "name": "x",
+      "platform": "youtube",
+      "errorMessage": "x",
+      "failedAt": "x"
+    }
+  ],
+  "availability": [
+    {
+      "connectionId": "00000000-0000-4000-8000-000000000000",
+      "platform": "youtube",
+      "username": "x",
+      "status": "ready",
+      "missingScopes": [
+        "x"
+      ],
+      "lastSyncedAt": "x",
+      "note": "x"
+    }
+  ]
+}
+```
+
+### Analytics · Post Detail
+
+**GET /analytics/posts/{postId}** — Latest metrics and snapshot history for one post
+
+- Required scope: `posts:read`
+- Rate limit: none beyond the API-key `api` bucket
+- Possible errors: `UNAUTHORIZED`, `FORBIDDEN`, `TOO_MANY_REQUESTS`, `VALIDATION`, `BAD_REQUEST`, `NOT_FOUND`, `CONFLICT`, `INTERNAL`
+
+#### Request
+
+| Field | Type | Required | Default | Constraints | Description |
+| --- | --- | --- | --- | --- | --- |
+| postId | string (uuid) | required | — | format uuid | Fannout post ID. |
+
+#### Example request
+
+```bash
+curl -X GET "${API_PUBLIC_URL}/api/analytics/posts/00000000-0000-4000-8000-000000000000" \
+  -H "Authorization: Bearer $FANNOUT_API_KEY" \
+  -H 'Content-Type: application/json'
+```
+
+#### Response
+
+| Field | Type | Default | Constraints | Description |
+| --- | --- | --- | --- | --- |
+| postId | string (uuid) | — | format uuid | Post ID. |
+| platform | youtube \| x \| linkedin \| threads \| facebook \| null | — | enum: youtube, x, linkedin, threads, facebook | Platform key. |
+| latest | object \| null | — | — | Most recent snapshot; null before the first sync. |
+| engagement | number \| null | — | — | Engagement of the latest snapshot. |
+| snapshots[].capturedAt | string | — | — | ISO time. |
+| snapshots[].metrics.views | number | — | min 0 | Views / plays. |
+| snapshots[].metrics.impressions | number | — | min 0 | Times the content was shown. |
+| snapshots[].metrics.reach | number | — | min 0 | Unique accounts reached. |
+| snapshots[].metrics.likes | number | — | min 0 | Likes / reactions. |
+| snapshots[].metrics.comments | number | — | min 0 | Comments / replies. |
+| snapshots[].metrics.shares | number | — | min 0 | Shares. |
+| snapshots[].metrics.saves | number | — | min 0 | Saves. |
+| snapshots[].metrics.reposts | number | — | min 0 | Reposts / retweets. |
+| snapshots[].metrics.quotes | number | — | min 0 | Quote posts. |
+| snapshots[].metrics.bookmarks | number | — | min 0 | Bookmarks. |
+| snapshots[].metrics.clicks | number | — | min 0 | Link clicks. |
+| snapshots[].metrics.watch_time_seconds | number | — | min 0 | Total watch time in seconds. |
+| snapshots[].metrics.avg_view_duration_seconds | number | — | min 0 | Average view duration in seconds. |
+| snapshots[].metrics.followers | number | — | min 0 | Follower / subscriber total. |
+| snapshots[].metrics.followers_gained | number | — | min 0 | Followers gained. |
+| snapshots[].metrics.followers_lost | number | — | min 0 | Followers lost. |
+| snapshots[].metrics.profile_views | number | — | min 0 | Profile / Page views. |
+| snapshots[].metrics.engagements | number | — | min 0 | Platform-reported total engagements (when not broken down). |
+| snapshots[].metrics.video_views | number | — | min 0 | Video views as the platform counts them. |
+
+#### Example response
+
+```json
+{
+  "postId": "00000000-0000-4000-8000-000000000000",
+  "platform": "youtube",
+  "latest": {},
+  "engagement": 1,
+  "snapshots": [
+    {
+      "capturedAt": "x",
+      "metrics": {}
+    }
+  ]
+}
+```
+
+### Analytics · Refresh
+
+**POST /analytics/{connectionId}/refresh** — Refresh analytics for a connection now
+
+- Required scope: `posts:read`
+- Rate limit: api (60/60s; plus API key api 60/60s)
+- Possible errors: `UNAUTHORIZED`, `FORBIDDEN`, `TOO_MANY_REQUESTS`, `VALIDATION`, `BAD_REQUEST`, `NOT_FOUND`, `CONFLICT`, `INTERNAL`
+
+#### Request
+
+| Field | Type | Required | Default | Constraints | Description |
+| --- | --- | --- | --- | --- | --- |
+| connectionId | string (uuid) | required | — | format uuid | Connection to re-sync now. |
+
+#### Example request
+
+```bash
+curl -X POST "${API_PUBLIC_URL}/api/analytics/00000000-0000-4000-8000-000000000000/refresh" \
+  -H "Authorization: Bearer $FANNOUT_API_KEY" \
+  -H 'Content-Type: application/json' \
+  --data '{
+  "connectionId": "00000000-0000-4000-8000-000000000000"
+}'
+```
+
+#### Response
+
+| Field | Type | Default | Constraints | Description |
+| --- | --- | --- | --- | --- |
+| queued | true | — | — | A sync was queued. |
+| refreshAvailableAt | string | — | — | Next allowed manual refresh (ISO). |
+
+#### Example response
+
+```json
+{
+  "queued": true,
+  "refreshAvailableAt": "x"
+}
+```
+
+### Analytics · Sync Status
+
+**GET /analytics/sync-status** — Analytics sync status per connection
+
+- Required scope: `posts:read`
+- Rate limit: none beyond the API-key `api` bucket
+- Possible errors: `UNAUTHORIZED`, `FORBIDDEN`, `TOO_MANY_REQUESTS`, `VALIDATION`, `BAD_REQUEST`, `NOT_FOUND`, `CONFLICT`, `INTERNAL`
+
+#### Request
+
+| Field | Type | Required | Default | Constraints | Description |
+| --- | --- | --- | --- | --- | --- |
+| connectionId | string (uuid) | optional | — | format uuid | One connection; omit for every active connection. |
+
+#### Example request
+
+```bash
+curl -X GET "${API_PUBLIC_URL}/api/analytics/sync-status" \
+  -H "Authorization: Bearer $FANNOUT_API_KEY" \
+  -H 'Content-Type: application/json'
+```
+
+#### Response
+
+| Field | Type | Default | Constraints | Description |
+| --- | --- | --- | --- | --- |
+| connections[].connectionId | string (uuid) | — | format uuid | Social connection ID. |
+| connections[].platform | youtube \| x \| linkedin \| threads \| facebook | — | enum: youtube, x, linkedin, threads, facebook | Platform key. |
+| connections[].username | string \| null | — | — | Account handle. |
+| connections[].status | ready \| no_data \| needs_reconnect \| unsupported \| error | — | enum: ready, no_data, needs_reconnect, unsupported, error | ready = has data; no_data = waiting for the first sync; needs_reconnect = missing scope/token; unsupported = platform gives no analytics; error = last sync failed. |
+| connections[].missingScopes | string[] | — | — | Scopes to grant by reconnecting. |
+| connections[].lastSyncedAt | string \| null | — | — | Last successful sync (ISO). |
+| connections[].note | string \| null | — | — | Platform note. |
+| connections[].lastAccountSyncAt | string \| null | — | — | ISO time. |
+| connections[].lastPostSyncAt | string \| null | — | — | ISO time. |
+| connections[].lastError | string \| null | — | — | Last sync error. |
+| connections[].refreshAvailableAt | string \| null | — | — | When Refresh can be used again (ISO); null = now. |
+
+#### Example response
+
+```json
+{
+  "connections": [
+    {
+      "connectionId": "00000000-0000-4000-8000-000000000000",
+      "platform": "youtube",
+      "username": "x",
+      "status": "ready",
+      "missingScopes": [
+        "x"
+      ],
+      "lastSyncedAt": "x",
+      "note": "x",
+      "lastAccountSyncAt": "x",
+      "lastPostSyncAt": "x",
+      "lastError": "x",
+      "refreshAvailableAt": "x"
+    }
+  ]
+}
+```
+
+### Analytics · Top Posts
+
+**GET /analytics/top-posts** — Top posts by views, engagement or likes
+
+- Required scope: `posts:read`
+- Rate limit: none beyond the API-key `api` bucket
+- Possible errors: `UNAUTHORIZED`, `FORBIDDEN`, `TOO_MANY_REQUESTS`, `VALIDATION`, `BAD_REQUEST`, `NOT_FOUND`, `CONFLICT`, `INTERNAL`
+
+#### Request
+
+| Field | Type | Required | Default | Constraints | Description |
+| --- | --- | --- | --- | --- | --- |
+| cursor | string \| null | optional | — | min length 1; max length 300 | Opaque cursor from the previous page's nextCursor; omit for the first page. |
+| limit | integer | required | 10 | min 1; max 10; default: 10 | Items per page (max 10). |
+| range | 7d \| 28d \| 90d \| custom | required | "28d" | enum: 7d, 28d, 90d, custom; default: "28d" | Last 7, 28 or 90 days including today, or custom (needs from + to). |
+| from | string (date) | optional | — | format date | Custom range start (YYYY-MM-DD, inclusive). |
+| to | string (date) | optional | — | format date | Custom range end (YYYY-MM-DD, inclusive; max 366 days). |
+| connectionId | string (uuid) | optional | — | format uuid | Limit to one social connection; omit for all. |
+| sortBy | views \| engagement \| likes | required | "views" | enum: views, engagement, likes; default: "views" | Sort key (highest first). |
+
+#### Example request
+
+```bash
+curl -X GET "${API_PUBLIC_URL}/api/analytics/top-posts" \
+  -H "Authorization: Bearer $FANNOUT_API_KEY" \
+  -H 'Content-Type: application/json'
+```
+
+#### Response
+
+| Field | Type | Default | Constraints | Description |
+| --- | --- | --- | --- | --- |
+| items[].postId | string (uuid) | — | format uuid | Post ID. |
+| items[].connectionId | string (uuid) | — | format uuid | Social connection ID. |
+| items[].platform | youtube \| x \| linkedin \| threads \| facebook \| null | — | enum: youtube, x, linkedin, threads, facebook | Platform key. |
+| items[].title | string | — | — | Post name or caption. |
+| items[].publishedAt | string \| null | — | — | ISO time. |
+| items[].postUrl | string \| null | — | — | Link on the platform. |
+| items[].thumbnailUrl | string \| null | — | — | Short-lived preview URL. |
+| items[].metrics.views | number | — | min 0 | Views / plays. |
+| items[].metrics.impressions | number | — | min 0 | Times the content was shown. |
+| items[].metrics.reach | number | — | min 0 | Unique accounts reached. |
+| items[].metrics.likes | number | — | min 0 | Likes / reactions. |
+| items[].metrics.comments | number | — | min 0 | Comments / replies. |
+| items[].metrics.shares | number | — | min 0 | Shares. |
+| items[].metrics.saves | number | — | min 0 | Saves. |
+| items[].metrics.reposts | number | — | min 0 | Reposts / retweets. |
+| items[].metrics.quotes | number | — | min 0 | Quote posts. |
+| items[].metrics.bookmarks | number | — | min 0 | Bookmarks. |
+| items[].metrics.clicks | number | — | min 0 | Link clicks. |
+| items[].metrics.watch_time_seconds | number | — | min 0 | Total watch time in seconds. |
+| items[].metrics.avg_view_duration_seconds | number | — | min 0 | Average view duration in seconds. |
+| items[].metrics.followers | number | — | min 0 | Follower / subscriber total. |
+| items[].metrics.followers_gained | number | — | min 0 | Followers gained. |
+| items[].metrics.followers_lost | number | — | min 0 | Followers lost. |
+| items[].metrics.profile_views | number | — | min 0 | Profile / Page views. |
+| items[].metrics.engagements | number | — | min 0 | Platform-reported total engagements (when not broken down). |
+| items[].metrics.video_views | number | — | min 0 | Video views as the platform counts them. |
+| items[].engagement | number \| null | — | — | Engagement (see MetricsSchema); null = not reported. |
+| items[].capturedAt | string | — | — | When these metrics were synced (ISO). |
+| nextCursor | string \| null | — | — | Pass as cursor to get the next page; null when there are no more items. |
+
+#### Example response
+
+```json
+{
+  "items": [
+    {
+      "postId": "00000000-0000-4000-8000-000000000000",
+      "connectionId": "00000000-0000-4000-8000-000000000000",
+      "platform": "youtube",
+      "title": "x",
+      "publishedAt": "x",
+      "postUrl": "x",
+      "thumbnailUrl": "x",
+      "metrics": {},
+      "engagement": 1,
+      "capturedAt": "x"
+    }
+  ],
+  "nextCursor": "x"
 }
 ```
 
@@ -1802,6 +2297,11 @@ curl -X GET "${API_PUBLIC_URL}/api/platforms/capabilities" \
 | [].mediaRules.shortMaxSeconds | number | — | — | Vertical videos up to this length publish as Shorts. |
 | [].mediaRules.requiresPublicUrl | boolean | — | — | The platform fetches media from a public URL. |
 | [].mediaRules.billed | boolean | — | — | The platform bills API usage for posting. |
+| [].analytics.supported | boolean | — | — | Fannout can read analytics for this platform with the current access. |
+| [].analytics.accountMetrics | views \| impressions \| reach \| likes \| comments \| shares \| saves \| reposts \| quotes \| bookmarks \| clicks \| watch_time_seconds \| avg_view_duration_seconds \| followers \| followers_gained \| followers_lost \| profile_views \| engagements \| video_views[] | — | — | Normalized keys synced per day for the account. |
+| [].analytics.postMetrics | views \| impressions \| reach \| likes \| comments \| shares \| saves \| reposts \| quotes \| bookmarks \| clicks \| watch_time_seconds \| avg_view_duration_seconds \| followers \| followers_gained \| followers_lost \| profile_views \| engagements \| video_views[] | — | — | Normalized keys synced per published post. |
+| [].analytics.requiredScopes | string[] | — | — | OAuth scopes the connection needs; missing → reconnect to enable analytics. |
+| [].analytics.note | string | — | — | Platform note shown on the dashboard. |
 
 #### Example response
 
@@ -1831,7 +2331,19 @@ curl -X GET "${API_PUBLIC_URL}/api/platforms/capabilities" \
         "required": false
       }
     ],
-    "mediaRules": {}
+    "mediaRules": {},
+    "analytics": {
+      "supported": false,
+      "accountMetrics": [
+        "views"
+      ],
+      "postMetrics": [
+        "views"
+      ],
+      "requiredScopes": [
+        "x"
+      ]
+    }
   }
 ]
 ```

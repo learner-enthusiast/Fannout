@@ -47,6 +47,12 @@ export const colorTokenNames = [
     'chart-3',
     'chart-4',
     'chart-5',
+    'chart-youtube',
+    'chart-instagram',
+    'chart-facebook',
+    'chart-threads',
+    'chart-linkedin',
+    'chart-x',
 ] as const
 
 export type ColorTokenName = (typeof colorTokenNames)[number]
@@ -92,6 +98,12 @@ const dark: ThemeColors = {
     'chart-3': '#4ADE80',
     'chart-4': '#FBBF24',
     'chart-5': '#F87171',
+    'chart-youtube': '#F87171',
+    'chart-instagram': '#FBBF24',
+    'chart-facebook': '#6264F0',
+    'chart-threads': '#4ADE80',
+    'chart-linkedin': '#22D3EE',
+    'chart-x': '#ECECF4',
 }
 
 const light: ThemeColors = {
@@ -133,6 +145,12 @@ const light: ThemeColors = {
     'chart-3': '#166534',
     'chart-4': '#92400E',
     'chart-5': '#B91C1C',
+    'chart-youtube': '#B91C1C',
+    'chart-instagram': '#92400E',
+    'chart-facebook': '#4338CA',
+    'chart-threads': '#166534',
+    'chart-linkedin': '#0E7490',
+    'chart-x': '#1C1A16',
 }
 
 function withArrays(colors: ThemeColors) {

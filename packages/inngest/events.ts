@@ -83,3 +83,13 @@ export const postDeleteRequested = eventType("post/delete.requested", { schema: 
 
 /** Apply posts.config.pendingEdit on the platform. */
 export const postEditRequested = eventType("post/edit.requested", { schema: PostActionSchema });
+
+/** Analytics: sync one connection's account metrics (days back; 28 = backfill). Sent by the crons and analytics.refresh. */
+export const analyticsAccountSyncRequested = eventType("analytics/account.sync.requested", {
+  schema: z.object({ connectionId: z.uuid(), platform: z.string(), days: z.number().int().min(1).max(90) }),
+});
+
+/** Analytics: snapshot the connection's due published posts. */
+export const analyticsPostSyncRequested = eventType("analytics/posts.sync.requested", {
+  schema: z.object({ connectionId: z.uuid(), platform: z.string() }),
+});

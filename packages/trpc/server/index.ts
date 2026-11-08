@@ -11,6 +11,7 @@ import { platformsRouter } from "./routes/platforms/route";
 import { postsRouter } from "./routes/posts/route";
 import { aiRouter } from "./routes/ai/route";
 import { apiKeysRouter } from "./routes/api-keys/route";
+import { analyticsRouter } from "./routes/analytics/route";
 
 export const serverRouter = router({
   health: healthRouter,
@@ -24,6 +25,7 @@ export const serverRouter = router({
   posts: postsRouter,
   ai: aiRouter,
   apiKeys: apiKeysRouter,
+  analytics: analyticsRouter,
 });
 
 export { createContext } from "./context";
