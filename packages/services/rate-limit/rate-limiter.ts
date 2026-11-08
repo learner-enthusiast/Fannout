@@ -25,7 +25,7 @@ const WindowSchema = z.object({
   blockDuration: z.number().int().nonnegative().default(0),
 });
 
-export const BucketSchema = z.enum(["api", "publish", "delete", "edit", "ai", "authFail"]);
+export const BucketSchema = z.enum(["api", "publish", "delete", "edit", "ai", "authFail", "webhook"]);
 export type Bucket = z.infer<typeof BucketSchema>;
 
 const TierSchema = z.record(BucketSchema, z.array(WindowSchema).min(1));
@@ -46,6 +46,8 @@ const FREE = {
   edit: [{ points: 30, duration: 60 * 60 }],
   ai: [{ points: 20, duration: 60 * 60 }],
   authFail: [{ points: 10, duration: 60, blockDuration: 15 * 60 }],
+  /** Public Meta callbacks (/webhooks/meta/*), keyed by IP. */
+  webhook: [{ points: 30, duration: 60 }],
 };
 
 export const RATE_LIMITS = RateLimitConfigSchema.parse({

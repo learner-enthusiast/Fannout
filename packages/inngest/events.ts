@@ -93,3 +93,8 @@ export const analyticsAccountSyncRequested = eventType("analytics/account.sync.r
 export const analyticsPostSyncRequested = eventType("analytics/posts.sync.requested", {
   schema: z.object({ connectionId: z.uuid(), platform: z.string() }),
 });
+
+/** Meta (Facebook/Threads) data-deletion callback accepted → delete that user's Meta data. */
+export const metaDataDeletionRequested = eventType("meta/data-deletion.requested", {
+  schema: z.object({ requestId: z.uuid() }),
+});

@@ -13,6 +13,7 @@ export const NotificationTypeSchema = z.enum([
   "post_delete_failed",
   "post_edited",
   "post_edit_failed",
+  "connection_removed",
 ]);
 export type NotificationType = z.infer<typeof NotificationTypeSchema>;
 

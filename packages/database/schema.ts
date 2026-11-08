@@ -11,3 +11,4 @@ export * from "./models/media-folder-item";
 export * from "./models/ai-generation";
 export * from "./models/api-key";
 export * from "./models/analytics";
+export * from "./models/data-deletion-request";

@@ -78,6 +78,13 @@
       "when": 1794122286512,
       "tag": "0010_analytics",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1794124742087,
+      "tag": "0011_data_deletion_requests",
+      "breakpoints": true
     }
   ]
 }

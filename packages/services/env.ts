@@ -68,6 +68,11 @@ const envSchema = z.object({
     .regex(/^v\d+\.\d+$/)
     .default("v23.0"),
 
+  /** App secret that signs Facebook deauthorize / data-deletion signed_requests (default FACEBOOK_CLIENT_SECRET). */
+  META_APP_SECRET: optional,
+  /** Threads app secret for the uninstall / delete callbacks (default THREADS_CLIENT_SECRET). */
+  THREADS_APP_SECRET: optional,
+
   THREADS_CLIENT_ID: optional,
   THREADS_CLIENT_SECRET: optional,
   /** Threads only accepts HTTPS redirect URIs (use a tunnel such as ngrok locally). */

@@ -4,6 +4,7 @@ import { createNotificationFn, pruneNotifications } from "./functions/notificati
 import { namePostBatch, publishBatch, publishPost } from "./functions/publishing";
 import { generateContent } from "./functions/ai-content";
 import { deletePost, editPost } from "./functions/post-actions";
+import { metaDataDeletion } from "./functions/meta";
 import { analyticsAccountCron, analyticsAccountSync, analyticsPostCron, analyticsPostSync } from "./functions/analytics";
 
 /**
@@ -27,4 +28,5 @@ export const functions: InngestFunction.Any[] = [
   analyticsPostCron,
   analyticsAccountSync,
   analyticsPostSync,
+  metaDataDeletion,
 ];

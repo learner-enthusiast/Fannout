@@ -153,6 +153,8 @@ export function createFacebookProvider(credentials: ProviderCredentials): OAuthP
           displayName: page.name ?? null,
           profilePictureUrl: page.picture?.data.url ?? null,
           config: {
+            // App-scoped Facebook USER id: Meta's deauthorize / data-deletion callbacks send this, not the Page id.
+            facebookUserId: me.id,
             facebookUser: { id: me.id, name: me.name ?? null },
             page: { id: page.id, category: page.category ?? null, tasks: page.tasks ?? [] },
           },

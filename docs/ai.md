@@ -4,7 +4,7 @@ Fannout lets a person prepare media once and fan it out to connected social plat
 Use this guide when acting through the HTTP API with a scoped personal API key.
 This document is the contract. Follow it exactly.
 
-Generated from code at 557fc55 on 2026-11-08. Do not edit generated sections by hand.
+Generated from code at b80eb9b on 2026-11-08. Do not edit generated sections by hand.
 
 ## Authentication
 
@@ -34,6 +34,7 @@ Send `Authorization: Bearer fn_live_…`. Create keys in **Settings → API keys
 | `delete` | 30 requests / 3600 seconds |
 | `edit` | 30 requests / 3600 seconds |
 | `publish` | 10 requests / 60 seconds<br>100 requests / 86400 seconds |
+| `webhook` | 30 requests / 60 seconds |
 
 Every API-key response includes `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X-RateLimit-Reset` (Unix seconds). A `429` also includes `Retry-After`; wait that many seconds before retrying and never hammer the endpoint.
 
@@ -2096,7 +2097,7 @@ curl -X GET "${API_PUBLIC_URL}/api/notifications" \
 | Field | Type | Default | Constraints | Description |
 | --- | --- | --- | --- | --- |
 | items[].id | string (uuid) | — | format uuid | Notification ID. |
-| items[].type | upload_succeeded \| upload_failed \| post_published \| post_failed \| post_scheduled \| schedule_failed \| schedule_missed \| post_deleted \| post_delete_failed \| post_edited \| post_edit_failed | — | enum: upload_succeeded, upload_failed, post_published, post_failed, post_scheduled, schedule_failed, schedule_missed, post_deleted, post_delete_failed, post_edited, post_edit_failed | What happened. |
+| items[].type | upload_succeeded \| upload_failed \| post_published \| post_failed \| post_scheduled \| schedule_failed \| schedule_missed \| post_deleted \| post_delete_failed \| post_edited \| post_edit_failed \| connection_removed | — | enum: upload_succeeded, upload_failed, post_published, post_failed, post_scheduled, schedule_failed, schedule_missed, post_deleted, post_delete_failed, post_edited, post_edit_failed, connection_removed | What happened. |
 | items[].title | string | — | — | Short headline. |
 | items[].body | string | — | — | Longer message. |
 | items[].link | string \| null | — | — | In-app path the notification points to (web UI). |

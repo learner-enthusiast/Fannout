@@ -6,6 +6,7 @@ export { inngest } from "./client";
 export { functions } from "./functions";
 export * from "./events";
 export { schedulingEffects } from "./scheduling";
+export { metaEffects } from "./functions/meta";
 export { eventType, NonRetriableError, RetryAfterError, cron, type InngestFunction } from "inngest";
 
 /**

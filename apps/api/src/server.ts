@@ -13,6 +13,7 @@ import helmet from "helmet";
 import { env } from "./env";
 import { errorHandler } from "./middleware/error-handler";
 import { clerkWebhookHandler } from "./webhooks/clerk";
+import { createMetaWebhookRouter } from "./webhooks/meta";
 import { createDefaultOAuthRouter } from "./routes/oauth";
 import { inngestHandler } from "@repo/inngest";
 import { loggableUrl } from "./utils/safe-url";
@@ -46,6 +47,8 @@ app.use(
   }),
 );
 app.post("/webhooks/clerk", express.raw({ type: "application/json" }), clerkWebhookHandler);
+// Meta deauthorize / data-deletion callbacks (urlencoded signed_request, rate limited per IP).
+app.use("/webhooks/meta", createMetaWebhookRouter({ webUrl: env.WEB_URL }));
 // Inngest sends large step payloads; give it its own parser ahead of the global 100kb one.
 // Inngest holds the connection open while one step runs. Node's requestTimeout/headersTimeout only
 // cover *receiving* the (small) request, and the socket idle timeout defaults to off — but a step
