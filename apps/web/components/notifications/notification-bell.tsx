@@ -87,7 +87,7 @@ export function NotificationBell() {
     const [open, setOpen] = useState(false)
     const [scrollRoot, setScrollRoot] = useState<HTMLDivElement | null>(null)
 
-    const unread = trpc.notifications.unreadCount.useQuery(undefined, {
+    const unread = trpc.notifications.unreadCount.useQuery({}, {
         refetchInterval: 30_000,
         refetchOnWindowFocus: true,
         staleTime: 0,
@@ -139,7 +139,7 @@ export function NotificationBell() {
                             size="sm"
                             disabled={count === 0}
                             loading={markAll.isPending}
-                            onClick={() => markAll.mutate()}
+                            onClick={() => markAll.mutate({})}
                         >
                             Mark All as Read
                         </Button>

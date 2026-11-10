@@ -1,6 +1,6 @@
 import { aiContentGenerateRequested, inngest } from "@repo/inngest";
-import { createGeneration, getGeneration } from "@repo/services/ai-content";
-import { GenerateInputBaseSchema, GenerationViewSchema } from "@repo/services/ai-content/model";
+import { createGeneration, createInstructionPreset, getGeneration, listInstructionPresets } from "@repo/services/ai-content";
+import { CreateInstructionPresetInputSchema, GenerateInputBaseSchema, GenerationViewSchema, InstructionPresetPageSchema, InstructionPresetViewSchema, ListInstructionPresetsInputSchema } from "@repo/services/ai-content/model";
 import { z } from "zod";
 import { rateLimited, router, scoped } from "../../trpc";
 
@@ -16,6 +16,18 @@ export const aiRouter = router({
       await inngest.send(aiContentGenerateRequested.create({ generationId, userId: ctx.dbUserId }, { id: `ai-generation:${generationId}` }));
       return { generationId };
     }),
+
+  instructionPresets: scoped("ai:generate")
+    .meta({ openapi: { method: "GET", path: "/ai/instruction-presets", summary: "List saved AI instruction presets, newest first", protect: true } })
+    .input(ListInstructionPresetsInputSchema)
+    .output(InstructionPresetPageSchema)
+    .query(({ ctx, input }) => listInstructionPresets(ctx.dbUserId, input)),
+
+  createInstructionPreset: scoped("ai:generate")
+    .meta({ openapi: { method: "POST", path: "/ai/instruction-presets", summary: "Save a reusable AI instruction preset", protect: true } })
+    .input(CreateInstructionPresetInputSchema)
+    .output(InstructionPresetViewSchema)
+    .mutation(({ ctx, input }) => createInstructionPreset(ctx.dbUserId, input)),
 
   getGeneration: scoped("ai:generate")
     .meta({ openapi: { method: "GET", path: "/ai/generations/{generationId}", summary: "Get an AI generation's status and output", protect: true } })

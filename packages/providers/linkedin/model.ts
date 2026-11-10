@@ -786,7 +786,12 @@ export type UgcAsset = z.infer<typeof UgcAssetSchema>;
 export const UgcVisibilitySchema = z.enum(["PUBLIC", "CONNECTIONS"]);
 export const UgcShareMediaCategorySchema = z.enum(["NONE", "ARTICLE", "IMAGE", "VIDEO"]);
 
-const UgcTextSchema = z.object({ text: z.string() });
+const UgcTextAttributeSchema = z.object({
+  start: z.number().int().nonnegative(),
+  length: z.number().int().positive(),
+  value: z.union([z.object({ person: PersonUrnSchema }), z.object({ organization: OrganizationUrnSchema })]),
+});
+const UgcTextSchema = z.object({ text: z.string(), attributes: z.array(UgcTextAttributeSchema).optional() });
 
 export const UgcShareMediaSchema = z.object({
   status: z.literal("READY"),
@@ -816,6 +821,7 @@ export const CreateUgcPostInputSchema = z
   .object({
     author: PersonUrnSchema,
     commentary: z.string().max(3000),
+    attributes: z.array(UgcTextAttributeSchema).optional(),
     visibility: UgcVisibilitySchema.default("PUBLIC"),
     mediaCategory: UgcShareMediaCategorySchema,
     media: z
@@ -851,6 +857,11 @@ export const LINKEDIN_COMMENTARY_MAX = 3000;
  * not a size limit).
  */
 export const LINKEDIN_COMPOSE: ComposeCapabilities = {
+  mentions: {
+    supported: true,
+    kind: "urn",
+    note: "Requires the exact LinkedIn display name and urn:li:person:{id} or urn:li:organization:{id}. UGC posts use shareCommentary attributes; no name-to-URN lookup is available with Share on LinkedIn.",
+  },
   supportsVideo: true,
   supportsPhotos: true,
   maxPhotos: LINKEDIN_UGC_MAX_IMAGES,
@@ -867,6 +878,11 @@ export const LINKEDIN_COMPOSE: ComposeCapabilities = {
 
 /** With LINKEDIN_USE_COMMUNITY_API=true (Community Management /rest/posts). */
 export const LINKEDIN_COMMUNITY_COMPOSE: ComposeCapabilities = {
+  mentions: {
+    supported: true,
+    kind: "urn",
+    note: "Requires the exact LinkedIn display name and a person/organization URN. Community posts use little-text @[Name](urn:li:person|organization:ID) syntax.",
+  },
   supportsVideo: true,
   supportsPhotos: true,
   maxPhotos: LINKEDIN_MULTI_IMAGE.max,
@@ -879,6 +895,14 @@ export const LINKEDIN_COMMUNITY_COMPOSE: ComposeCapabilities = {
   editableFields: ["commentary"],
   editNote: "Only the post text can be edited (Community Management API).",
 };
+
+export const LinkedInMentionRangeSchema = z.object({
+  contactId: z.uuid(),
+  start: z.number().int().nonnegative(),
+  length: z.number().int().positive(),
+  displayName: z.string().min(1).max(200),
+  platformRef: z.string().regex(/^urn:li:(person|organization):[^:]+$/),
+});
 
 export const LinkedInComposeInputSchema = z.object({
   commentary: composeField(z.string().max(LINKEDIN_COMMENTARY_MAX, `Posts can be at most ${LINKEDIN_COMMENTARY_MAX} characters`).optional(), {
@@ -905,5 +929,7 @@ export const LinkedInComposeInputSchema = z.object({
     mediaType: "video",
   }),
   isReshareDisabledByAuthor: composeField(z.boolean().optional(), { label: "Disable resharing", description: "Stop others from resharing the post.", kind: "toggle" }),
+  /** Internal editor ranges, not a user-facing compose control. */
+  mentions: z.array(LinkedInMentionRangeSchema).max(50).optional(),
 });
 export type LinkedInComposeInput = z.infer<typeof LinkedInComposeInputSchema>;

@@ -1,6 +1,7 @@
 import { readComposeMeta, utf8Length, xWeightedLength, type ComposeFieldMeta } from "@repo/providers";
 import { z } from "zod";
 import { PLATFORMS, type Platform } from "../publishing/platforms";
+import { PaginationInputSchema, paginatedOutput } from "../common/pagination";
 
 /**
  * AI output fields are the compose fields marked `ai: true` in each
@@ -83,6 +84,7 @@ export const AiTargetSchema = z.object({
   socialConnectionId: z.uuid().describe("Account to write content for."),
   /** Omit for every AI field of the platform. */
   fields: z.array(z.string().min(1)).min(1).max(10).optional().describe("Compose fields to fill (see each platform's ai fields); omit for all of them."),
+  instruction: z.string().trim().max(500).optional().describe("Instructions for this account only; combined with globalInstruction and wins on conflicts."),
 });
 
 /** Route input (no refinements: the OpenAPI generator can't omit fields from refined objects). */
@@ -91,7 +93,7 @@ export const GenerateInputBaseSchema = z.object({
   subtitleMediaId: z.uuid().optional().describe("Subtitle media (.srt/.vtt) to write from. jsonMediaId or subtitleMediaId is required."),
   videoMediaId: z.uuid().optional().describe("Video the content is for (adds its duration/orientation as context)."),
   targets: z.array(AiTargetSchema).min(1).max(20).describe("Accounts (and fields) to generate for."),
-  instruction: z.string().trim().max(300).optional().describe("Extra guidance for the writer, e.g. tone."),
+  globalInstruction: z.string().trim().max(500).optional().describe("Instructions applied to every target, e.g. a required title prefix; cannot override facts or platform limits."),
 });
 
 export const NO_SOURCE_MESSAGE = "Pick a social JSON or subtitles to generate from";
@@ -122,4 +124,18 @@ export const GenerationViewSchema = z.object({
     message: z.string().describe("Error message."),
   }).nullable().describe("Set when status is failed."),
 });
+
+export const InstructionPresetViewSchema = z.object({
+  id: z.uuid(),
+  name: z.string(),
+  text: z.string(),
+  createdAt: z.date(),
+});
+export const InstructionPresetPageSchema = paginatedOutput(InstructionPresetViewSchema);
+export const ListInstructionPresetsInputSchema = PaginationInputSchema;
+export const CreateInstructionPresetInputSchema = z.object({
+  name: z.string().trim().min(1).max(100).describe("Short preset name."),
+  text: z.string().trim().min(1).max(500).describe("Instruction text to reuse."),
+});
+
 export type GenerationView = z.infer<typeof GenerationViewSchema>;

@@ -30,6 +30,7 @@ export type YouTubeDownloadCaptionInput = z.input<typeof YouTubeDownloadCaptionI
 const GB = 1024 * 1024 * 1024;
 
 export const YOUTUBE_COMPOSE: ComposeCapabilities = {
+  mentions: { supported: false, kind: "text_only", note: "YouTube titles and descriptions do not support mention tagging in this publishing flow." },
   supportsVideo: true,
   supportsPhotos: false,
   maxPhotos: 0,
@@ -58,7 +59,7 @@ export const YouTubeComposeInputSchema = z.object({
   privacyStatus: composeField(YouTubePrivacyStatusSchema, {
     label: "Privacy", description: "Who can watch: public, unlisted or private.",
     kind: "select",
-    defaultValue: "private",
+    defaultValue: "public",
     options: [
       { value: "public", label: "Public" },
       { value: "unlisted", label: "Unlisted" },

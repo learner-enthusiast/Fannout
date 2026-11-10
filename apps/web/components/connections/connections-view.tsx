@@ -184,7 +184,7 @@ export function ConnectionsView() {
     const { getToken } = useAuth()
     const [connecting, setConnecting] = useState<ProviderSlug | null>(null)
     const [selectionId, setSelectionId] = useState<string | null>(null)
-    const list = trpc.socialConnections.providers.useQuery(undefined, { staleTime: 60_000 })
+    const list = trpc.socialConnections.providers.useQuery({}, { staleTime: 60_000 })
     useOAuthResult(setSelectionId)
 
     async function connect(slug: ProviderSlug) {

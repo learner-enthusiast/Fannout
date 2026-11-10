@@ -647,7 +647,7 @@ export class LinkedInProvider extends BaseProvider<LinkedInProviderConfig> {
       lifecycleState: "PUBLISHED",
       specificContent: {
         "com.linkedin.ugc.ShareContent": {
-          shareCommentary: { text: v.commentary },
+          shareCommentary: { text: v.commentary, ...(v.attributes?.length ? { attributes: v.attributes } : {}) },
           shareMediaCategory: v.mediaCategory,
           ...(v.media?.length
             ? {

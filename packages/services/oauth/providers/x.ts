@@ -37,7 +37,7 @@ export function createXProvider(credentials: ProviderCredentials): OAuthProvider
     provider: "X",
     redirectUri: credentials.redirectUri,
     scopes: splitScopes(credentials.scopes),
-    requiredScopes: ["users.read", "tweet.read"],
+    requiredScopes: ["tweet.read", "tweet.write", "users.read", "media.write", "offline.access"],
     usePkce: true,
     useNonce: false,
     isOidc: false,

@@ -37,6 +37,9 @@ export type ComposeDraft = {
     aiFills: Record<string, Record<string, { value: unknown; previous: unknown }>>
     /** Notes from the last generation, e.g. "Shortened automatically". */
     aiIssues: Record<string, Record<string, string>>
+    /** Global and per-account AI instructions, kept until the draft is posted. */
+    globalInstruction: string
+    accountInstructions: Record<string, string>
     /** Per-card schedule (wins over scheduleAll); absent = instant unless scheduleAll is set. */
     schedules: Record<string, { at: string; timezone: string }>
     /** "Schedule all…" fallback time for cards without their own. */
@@ -58,6 +61,8 @@ export const emptyDraft = (): ComposeDraft => ({
     aiSubtitleId: null,
     aiFills: {},
     aiIssues: {},
+    globalInstruction: '',
+    accountInstructions: {},
     schedules: {},
     scheduleAll: null,
 })

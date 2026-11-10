@@ -46,7 +46,7 @@ const envSchema = z.object({
   X_CLIENT_ID: optional,
   X_CLIENT_SECRET: optional,
   X_REDIRECT_URI: z.url().default("http://localhost:8000/api/oauth/x/callback"),
-  X_SCOPES: z.string().default("tweet.read users.read offline.access"),
+  X_SCOPES: z.string().default("tweet.read tweet.write users.read media.write offline.access"),
 
   GOOGLE_CLIENT_ID: optional,
   GOOGLE_CLIENT_SECRET: optional,

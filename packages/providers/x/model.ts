@@ -444,6 +444,11 @@ export type XListResponse<T> = { data?: T[]; includes?: Record<string, unknown>;
 
 
 export const X_COMPOSE: ComposeCapabilities = {
+  mentions: {
+    supported: true,
+    kind: "handle",
+    note: "Use @username in post text. X resolves plain-text handles; Fannout does not make paid username lookup calls.",
+  },
   supportsVideo: true,
   supportsPhotos: true,
   maxPhotos: X_MAX_MEDIA_PER_POST,
@@ -458,20 +463,24 @@ export const X_COMPOSE: ComposeCapabilities = {
   editNote: "The X API can't edit published posts. Delete and repost instead.",
 };
 
+export const XComposeReplySettingsSchema = z.enum(["everyone", "following", "mentionedUsers", "verified", "subscribers"]).default("everyone");
+
 export const XComposeInputSchema = z.object({
   text: composeField(
     z.string().refine((v) => xWeightedLength(v) <= X_POST_MAX_CHARS, `Posts can be at most ${X_POST_MAX_CHARS} characters`).optional(),
     { label: "Post text", description: "Post text (max 280 X-weighted characters; URLs count 23).", kind: "textarea", countMode: "weighted", maxLength: X_POST_MAX_CHARS, ai: true },
   ),
-  replySettings: composeField(XReplySettingsSchema.optional(), {
-    label: "Who can reply", description: "Who can reply; omit to let everyone reply.",
+  replySettings: composeField(XComposeReplySettingsSchema, {
+    label: "Who can reply", description: "Choose who can reply. Everyone omits reply_settings in POST /2/tweets.",
     kind: "select",
-    helper: "Leave empty to let everyone reply.",
+    defaultValue: "everyone",
+    helper: "Everyone is the default; X only receives a value for a restricted audience.",
     options: [
-      { value: "following", label: "Accounts you follow" },
-      { value: "mentionedUsers", label: "Only mentioned accounts" },
-      { value: "subscribers", label: "Subscribers" },
-      { value: "verified", label: "Verified accounts" },
+      { value: "everyone", label: "Everyone", description: "Anyone can reply. No reply_settings field is sent." },
+      { value: "following", label: "Accounts you follow", description: "Only accounts you follow can reply." },
+      { value: "mentionedUsers", label: "Only accounts you mention", description: "Only accounts mentioned in this post can reply." },
+      { value: "verified", label: "Verified accounts", description: "Only verified accounts can reply." },
+      { value: "subscribers", label: "Subscribers", description: "Only your subscribers can reply." },
     ],
   }),
   madeWithAi: composeField(z.boolean().optional(), { label: "Made with AI", description: "Label the media as made with AI.", kind: "toggle" }),

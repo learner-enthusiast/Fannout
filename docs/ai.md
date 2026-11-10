@@ -4,7 +4,7 @@ Fannout lets a person prepare media once and fan it out to connected social plat
 Use this guide when acting through the HTTP API with a scoped personal API key.
 This document is the contract. Follow it exactly.
 
-Generated from code at b80eb9b on 2026-11-08. Do not edit generated sections by hand.
+Generated from code at 6150538 on 2026-11-08. Do not edit generated sections by hand.
 
 ## Authentication
 
@@ -16,13 +16,13 @@ Send `Authorization: Bearer fn_live_…`. Create keys in **Settings → API keys
 
 | Scope | Operations |
 | --- | --- |
-| `posts:read` | GET /analytics/best-times<br>GET /analytics/overview<br>GET /analytics/posts/{postId}<br>GET /analytics/sync-status<br>GET /analytics/top-posts<br>GET /notifications<br>GET /notifications/unread-count<br>GET /posts/batches<br>GET /posts/batches/{batchId}<br>GET /posts/{postId}<br>POST /analytics/{connectionId}/refresh |
-| `posts:write` | PATCH /posts/{postId}<br>POST /notifications/read<br>POST /notifications/read-all<br>POST /posts/batches<br>POST /posts/validate<br>POST /posts/{postId}/cancel-schedule<br>POST /posts/{postId}/publish-now<br>POST /posts/{postId}/repost<br>POST /posts/{postId}/reschedule<br>POST /posts/{postId}/retry |
+| `posts:read` | GET /analytics/best-times<br>GET /analytics/overview<br>GET /analytics/posts/{postId}<br>GET /analytics/sync-status<br>GET /analytics/top-posts<br>GET /mentions/search<br>GET /notifications<br>GET /notifications/unread-count<br>GET /posts/batches<br>GET /posts/batches/{batchId}<br>GET /posts/{postId}<br>POST /analytics/{connectionId}/refresh |
+| `posts:write` | DELETE /mentions/{id}<br>PATCH /mentions/{id}<br>PATCH /posts/{postId}<br>POST /mentions<br>POST /notifications/read<br>POST /notifications/read-all<br>POST /posts/batches<br>POST /posts/validate<br>POST /posts/{postId}/cancel-schedule<br>POST /posts/{postId}/publish-now<br>POST /posts/{postId}/repost<br>POST /posts/{postId}/reschedule<br>POST /posts/{postId}/retry |
 | `posts:delete` | DELETE /posts/{postId}<br>POST /posts/batches/{batchId}/delete |
 | `media:read` | GET /folders<br>GET /folders/{folderId}<br>GET /folders/{folderId}/items<br>GET /media<br>GET /media/{mediaId}<br>GET /search |
 | `media:write` | DELETE /folders/{folderId}<br>DELETE /folders/{folderId}/items/{mediaId}<br>DELETE /media/{mediaId}<br>PATCH /folders/{folderId}<br>PATCH /folders/{folderId}/items/{mediaId}<br>PATCH /media/{mediaId}<br>POST /folders<br>POST /folders/from-suggestion<br>POST /folders/{folderId}/items<br>POST /media/uploads<br>POST /media/{mediaId}/complete<br>POST /media/{mediaId}/fail<br>PUT /folders/{folderId}/order |
 | `connections:read` | GET /platforms/youtube/{socialConnectionId}/categories<br>GET /platforms/youtube/{socialConnectionId}/playlists<br>GET /social-connections<br>GET /social-connections/providers |
-| `ai:generate` | GET /ai/generations/{generationId}<br>POST /ai/generations |
+| `ai:generate` | GET /ai/generations/{generationId}<br>GET /ai/instruction-presets<br>POST /ai/generations<br>POST /ai/instruction-presets |
 
 ## Rate limits
 
@@ -138,6 +138,11 @@ Fields for `targets[].input` when the account is LinkedIn:
 | visibility | PUBLIC \| CONNECTIONS | required | — | enum: PUBLIC, CONNECTIONS | PUBLIC = anyone; CONNECTIONS = connections only (member posts). |
 | videoTitle | string | optional | — | max length 200 | Title of the video (max 200 characters). |
 | isReshareDisabledByAuthor | boolean | optional | — | — | Stop others from resharing the post. |
+| mentions[].contactId | string (uuid) | optional | — | format uuid | Undocumented — see field name and constraints. |
+| mentions[].start | integer | optional | — | min 0; max 9007199254740991 | Undocumented — see field name and constraints. |
+| mentions[].length | integer | optional | — | max 9007199254740991 | Undocumented — see field name and constraints. |
+| mentions[].displayName | string | optional | — | min length 1; max length 200 | Undocumented — see field name and constraints. |
+| mentions[].platformRef | string | optional | — | pattern ^urn:li:(person\|organization):[^:]+$ | Undocumented — see field name and constraints. |
 
 Minimal valid `input` (required fields only):
 
@@ -183,14 +188,16 @@ Fields for `targets[].input` when the account is X:
 | Field | Type | Required | Default | Constraints | Description |
 | --- | --- | --- | --- | --- | --- |
 | text | string | optional | — | max length 280 | Post text (max 280 X-weighted characters; URLs count 23). |
-| replySettings | following \| mentionedUsers \| subscribers \| verified | optional | — | enum: following, mentionedUsers, subscribers, verified | Who can reply; omit to let everyone reply. |
+| replySettings | everyone \| following \| mentionedUsers \| verified \| subscribers | required | "everyone" | enum: everyone, following, mentionedUsers, verified, subscribers; default: "everyone" | Choose who can reply. Everyone omits reply_settings in POST /2/tweets. |
 | madeWithAi | boolean | optional | — | — | Label the media as made with AI. |
 | paidPartnership | boolean | optional | — | — | Label the post as a paid partnership. |
 
 Minimal valid `input` (required fields only):
 
 ```json
-{}
+{
+  "replySettings": "everyone"
+}
 ```
 
 ### YouTube (youtube)
@@ -226,6 +233,53 @@ Minimal valid `input` (required fields only):
 
 ## Endpoint reference
 
+### Ai · Create Instruction Preset
+
+**POST /ai/instruction-presets** — Save a reusable AI instruction preset
+
+- Required scope: `ai:generate`
+- Rate limit: none beyond the API-key `api` bucket
+- Possible errors: `UNAUTHORIZED`, `FORBIDDEN`, `TOO_MANY_REQUESTS`, `VALIDATION`, `BAD_REQUEST`, `NOT_FOUND`, `CONFLICT`, `INTERNAL`
+
+#### Request
+
+| Field | Type | Required | Default | Constraints | Description |
+| --- | --- | --- | --- | --- | --- |
+| name | string | required | — | min length 1; max length 100 | Short preset name. |
+| text | string | required | — | min length 1; max length 500 | Instruction text to reuse. |
+
+#### Example request
+
+```bash
+curl -X POST "${API_PUBLIC_URL}/api/ai/instruction-presets" \
+  -H "Authorization: Bearer $FANNOUT_API_KEY" \
+  -H 'Content-Type: application/json' \
+  --data '{
+  "name": "x",
+  "text": "x"
+}'
+```
+
+#### Response
+
+| Field | Type | Default | Constraints | Description |
+| --- | --- | --- | --- | --- |
+| id | string (uuid) | — | format uuid | Undocumented — see field name and constraints. |
+| name | string | — | — | Undocumented — see field name and constraints. |
+| text | string | — | — | Undocumented — see field name and constraints. |
+| createdAt | string (date-time) | — | format date-time | Undocumented — see field name and constraints. |
+
+#### Example response
+
+```json
+{
+  "id": "00000000-0000-4000-8000-000000000000",
+  "name": "x",
+  "text": "x",
+  "createdAt": "2020-01-01T00:00:00.000Z"
+}
+```
+
 ### Ai · Generate
 
 **POST /ai/generations** — Queue AI-written compose fields from a social JSON or subtitles
@@ -243,7 +297,8 @@ Minimal valid `input` (required fields only):
 | videoMediaId | string (uuid) | optional | — | format uuid | Video the content is for (adds its duration/orientation as context). |
 | targets[].socialConnectionId | string (uuid) | required | — | format uuid | Account to write content for. |
 | targets[].fields | string[] | optional | — | min items 1; max items 10 | Compose fields to fill (see each platform's ai fields); omit for all of them. |
-| instruction | string | optional | — | max length 300 | Extra guidance for the writer, e.g. tone. |
+| targets[].instruction | string | optional | — | max length 500 | Instructions for this account only; combined with globalInstruction and wins on conflicts. |
+| globalInstruction | string | optional | — | max length 500 | Instructions applied to every target, e.g. a required title prefix; cannot override facts or platform limits. |
 
 #### Example request
 
@@ -330,6 +385,55 @@ curl -X GET "${API_PUBLIC_URL}/api/ai/generations/00000000-0000-4000-8000-000000
     "code": "x",
     "message": "x"
   }
+}
+```
+
+### Ai · Instruction Presets
+
+**GET /ai/instruction-presets** — List saved AI instruction presets, newest first
+
+- Required scope: `ai:generate`
+- Rate limit: none beyond the API-key `api` bucket
+- Possible errors: `UNAUTHORIZED`, `FORBIDDEN`, `TOO_MANY_REQUESTS`, `VALIDATION`, `BAD_REQUEST`, `NOT_FOUND`, `CONFLICT`, `INTERNAL`
+
+#### Request
+
+| Field | Type | Required | Default | Constraints | Description |
+| --- | --- | --- | --- | --- | --- |
+| cursor | string \| null | optional | — | min length 1; max length 300 | Opaque cursor from the previous page's nextCursor; omit for the first page. |
+| limit | integer | required | 10 | min 1; max 10; default: 10 | Items per page (max 10). |
+
+#### Example request
+
+```bash
+curl -X GET "${API_PUBLIC_URL}/api/ai/instruction-presets" \
+  -H "Authorization: Bearer $FANNOUT_API_KEY" \
+  -H 'Content-Type: application/json'
+```
+
+#### Response
+
+| Field | Type | Default | Constraints | Description |
+| --- | --- | --- | --- | --- |
+| items[].id | string (uuid) | — | format uuid | Undocumented — see field name and constraints. |
+| items[].name | string | — | — | Undocumented — see field name and constraints. |
+| items[].text | string | — | — | Undocumented — see field name and constraints. |
+| items[].createdAt | string (date-time) | — | format date-time | Undocumented — see field name and constraints. |
+| nextCursor | string \| null | — | — | Pass as cursor to get the next page; null when there are no more items. |
+
+#### Example response
+
+```json
+{
+  "items": [
+    {
+      "id": "00000000-0000-4000-8000-000000000000",
+      "name": "x",
+      "text": "x",
+      "createdAt": "2020-01-01T00:00:00.000Z"
+    }
+  ],
+  "nextCursor": "x"
 }
 ```
 
@@ -2068,6 +2172,222 @@ curl -X PATCH "${API_PUBLIC_URL}/api/media/00000000-0000-4000-8000-000000000000"
 }
 ```
 
+### Mentions · Create
+
+**POST /mentions** — Save an X/Threads handle, LinkedIn URN or Facebook Page mention contact
+
+- Required scope: `posts:write`
+- Rate limit: none beyond the API-key `api` bucket
+- Possible errors: `UNAUTHORIZED`, `FORBIDDEN`, `TOO_MANY_REQUESTS`, `VALIDATION`, `BAD_REQUEST`, `NOT_FOUND`, `CONFLICT`, `INTERNAL`
+
+#### Request
+
+| Field | Type | Required | Default | Constraints | Description |
+| --- | --- | --- | --- | --- | --- |
+| platform | x \| threads \| linkedin \| facebook | required | — | enum: x, threads, linkedin, facebook | Platform this contact is for. |
+| displayName | string | required | — | min length 1; max length 200 | Label shown in the composer; must match LinkedIn exactly for LinkedIn mentions. |
+| handle | string | optional | — | max length 100; pattern ^[A-Za-z0-9_.]+$ | X/Threads username without @; letters, numbers, underscores and periods. |
+| platformRef | string | optional | — | max length 300 | LinkedIn person/organization URN or numeric Facebook Page ID. |
+| avatarUrl | string (uri) | optional | — | format uri | Optional avatar URL for the contact list. |
+
+#### Example request
+
+```bash
+curl -X POST "${API_PUBLIC_URL}/api/mentions" \
+  -H "Authorization: Bearer $FANNOUT_API_KEY" \
+  -H 'Content-Type: application/json' \
+  --data '{
+  "platform": "x",
+  "displayName": "x"
+}'
+```
+
+#### Response
+
+| Field | Type | Default | Constraints | Description |
+| --- | --- | --- | --- | --- |
+| id | string (uuid) | — | format uuid | Undocumented — see field name and constraints. |
+| platform | x \| threads \| linkedin \| facebook | — | enum: x, threads, linkedin, facebook | Undocumented — see field name and constraints. |
+| displayName | string | — | — | Undocumented — see field name and constraints. |
+| handle | string \| null | — | — | Undocumented — see field name and constraints. |
+| platformRef | string \| null | — | — | Undocumented — see field name and constraints. |
+| avatarUrl | string \| null | — | — | Undocumented — see field name and constraints. |
+| useCount | integer | — | min 0; max 9007199254740991 | Undocumented — see field name and constraints. |
+| lastUsedAt | string (date-time) \| null | — | format date-time | Undocumented — see field name and constraints. |
+| createdAt | string (date-time) | — | format date-time | Undocumented — see field name and constraints. |
+
+#### Example response
+
+```json
+{
+  "id": "00000000-0000-4000-8000-000000000000",
+  "platform": "x",
+  "displayName": "x",
+  "handle": "x",
+  "platformRef": "x",
+  "avatarUrl": "x",
+  "useCount": 0,
+  "lastUsedAt": "2020-01-01T00:00:00.000Z",
+  "createdAt": "2020-01-01T00:00:00.000Z"
+}
+```
+
+### Mentions · Delete
+
+**DELETE /mentions/{id}** — Delete a saved mention contact
+
+- Required scope: `posts:write`
+- Rate limit: none beyond the API-key `api` bucket
+- Possible errors: `UNAUTHORIZED`, `FORBIDDEN`, `TOO_MANY_REQUESTS`, `VALIDATION`, `BAD_REQUEST`, `NOT_FOUND`, `CONFLICT`, `INTERNAL`
+
+#### Request
+
+| Field | Type | Required | Default | Constraints | Description |
+| --- | --- | --- | --- | --- | --- |
+| id | string (uuid) | required | — | format uuid | Undocumented — see field name and constraints. |
+
+#### Example request
+
+```bash
+curl -X DELETE "${API_PUBLIC_URL}/api/mentions/00000000-0000-4000-8000-000000000000" \
+  -H "Authorization: Bearer $FANNOUT_API_KEY" \
+  -H 'Content-Type: application/json'
+```
+
+#### Response
+
+| Field | Type | Default | Constraints | Description |
+| --- | --- | --- | --- | --- |
+| updated | boolean | — | — | Undocumented — see field name and constraints. |
+
+#### Example response
+
+```json
+{
+  "updated": false
+}
+```
+
+### Mentions · Search
+
+**GET /mentions/search** — Search saved mention contacts; seeds your own connected accounts
+
+- Required scope: `posts:read`
+- Rate limit: none beyond the API-key `api` bucket
+- Possible errors: `UNAUTHORIZED`, `FORBIDDEN`, `TOO_MANY_REQUESTS`, `VALIDATION`, `BAD_REQUEST`, `NOT_FOUND`, `CONFLICT`, `INTERNAL`
+
+#### Request
+
+| Field | Type | Required | Default | Constraints | Description |
+| --- | --- | --- | --- | --- | --- |
+| cursor | string \| null | optional | — | min length 1; max length 300 | Opaque cursor from the previous page's nextCursor; omit for the first page. |
+| limit | integer | required | 10 | min 1; max 10; default: 10 | Items per page (max 10). |
+| platform | x \| threads \| linkedin \| facebook | required | — | enum: x, threads, linkedin, facebook | Platform whose contacts to search. |
+| q | string | required | "" | max length 100; default: "" | Case-insensitive display-name/handle search; empty returns most-used contacts. |
+
+#### Example request
+
+```bash
+curl -X GET "${API_PUBLIC_URL}/api/mentions/search" \
+  -H "Authorization: Bearer $FANNOUT_API_KEY" \
+  -H 'Content-Type: application/json'
+```
+
+#### Response
+
+| Field | Type | Default | Constraints | Description |
+| --- | --- | --- | --- | --- |
+| items[].id | string (uuid) | — | format uuid | Undocumented — see field name and constraints. |
+| items[].platform | x \| threads \| linkedin \| facebook | — | enum: x, threads, linkedin, facebook | Undocumented — see field name and constraints. |
+| items[].displayName | string | — | — | Undocumented — see field name and constraints. |
+| items[].handle | string \| null | — | — | Undocumented — see field name and constraints. |
+| items[].platformRef | string \| null | — | — | Undocumented — see field name and constraints. |
+| items[].avatarUrl | string \| null | — | — | Undocumented — see field name and constraints. |
+| items[].useCount | integer | — | min 0; max 9007199254740991 | Undocumented — see field name and constraints. |
+| items[].lastUsedAt | string (date-time) \| null | — | format date-time | Undocumented — see field name and constraints. |
+| items[].createdAt | string (date-time) | — | format date-time | Undocumented — see field name and constraints. |
+| nextCursor | string \| null | — | — | Pass as cursor to get the next page; null when there are no more items. |
+
+#### Example response
+
+```json
+{
+  "items": [
+    {
+      "id": "00000000-0000-4000-8000-000000000000",
+      "platform": "x",
+      "displayName": "x",
+      "handle": "x",
+      "platformRef": "x",
+      "avatarUrl": "x",
+      "useCount": 0,
+      "lastUsedAt": "2020-01-01T00:00:00.000Z",
+      "createdAt": "2020-01-01T00:00:00.000Z"
+    }
+  ],
+  "nextCursor": "x"
+}
+```
+
+### Mentions · Update
+
+**PATCH /mentions/{id}** — Rename or correct a mention contact
+
+- Required scope: `posts:write`
+- Rate limit: none beyond the API-key `api` bucket
+- Possible errors: `UNAUTHORIZED`, `FORBIDDEN`, `TOO_MANY_REQUESTS`, `VALIDATION`, `BAD_REQUEST`, `NOT_FOUND`, `CONFLICT`, `INTERNAL`
+
+#### Request
+
+| Field | Type | Required | Default | Constraints | Description |
+| --- | --- | --- | --- | --- | --- |
+| id | string (uuid) | required | — | format uuid | Undocumented — see field name and constraints. |
+| displayName | string | optional | — | min length 1; max length 200 | Undocumented — see field name and constraints. |
+| handle | string \| null | optional | — | max length 100; pattern ^[A-Za-z0-9_.]+$ | Undocumented — see field name and constraints. |
+| platformRef | string \| null | optional | — | max length 300 | Undocumented — see field name and constraints. |
+| avatarUrl | string (uri) \| null | optional | — | format uri | Undocumented — see field name and constraints. |
+
+#### Example request
+
+```bash
+curl -X PATCH "${API_PUBLIC_URL}/api/mentions/00000000-0000-4000-8000-000000000000" \
+  -H "Authorization: Bearer $FANNOUT_API_KEY" \
+  -H 'Content-Type: application/json' \
+  --data '{
+  "id": "00000000-0000-4000-8000-000000000000"
+}'
+```
+
+#### Response
+
+| Field | Type | Default | Constraints | Description |
+| --- | --- | --- | --- | --- |
+| id | string (uuid) | — | format uuid | Undocumented — see field name and constraints. |
+| platform | x \| threads \| linkedin \| facebook | — | enum: x, threads, linkedin, facebook | Undocumented — see field name and constraints. |
+| displayName | string | — | — | Undocumented — see field name and constraints. |
+| handle | string \| null | — | — | Undocumented — see field name and constraints. |
+| platformRef | string \| null | — | — | Undocumented — see field name and constraints. |
+| avatarUrl | string \| null | — | — | Undocumented — see field name and constraints. |
+| useCount | integer | — | min 0; max 9007199254740991 | Undocumented — see field name and constraints. |
+| lastUsedAt | string (date-time) \| null | — | format date-time | Undocumented — see field name and constraints. |
+| createdAt | string (date-time) | — | format date-time | Undocumented — see field name and constraints. |
+
+#### Example response
+
+```json
+{
+  "id": "00000000-0000-4000-8000-000000000000",
+  "platform": "x",
+  "displayName": "x",
+  "handle": "x",
+  "platformRef": "x",
+  "avatarUrl": "x",
+  "useCount": 0,
+  "lastUsedAt": "2020-01-01T00:00:00.000Z",
+  "createdAt": "2020-01-01T00:00:00.000Z"
+}
+```
+
 ### Notifications · List
 
 **GET /notifications** — List notifications
@@ -2266,6 +2586,9 @@ curl -X GET "${API_PUBLIC_URL}/api/platforms/capabilities" \
 | Field | Type | Default | Constraints | Description |
 | --- | --- | --- | --- | --- |
 | [].platform | youtube \| x \| linkedin \| threads \| facebook | — | enum: youtube, x, linkedin, threads, facebook | Platform key. |
+| [].mentions.supported | boolean | — | — | Whether the composer can insert mention contacts. |
+| [].mentions.kind | handle \| urn \| page \| text_only | — | enum: handle, urn, page, text_only | How the platform represents mentions. |
+| [].mentions.note | string | — | — | Syntax and platform limitations. |
 | [].label | string | — | — | Platform name. |
 | [].supportsVideo | boolean | — | — | Can publish a video. |
 | [].supportsPhotos | boolean | — | — | Can publish photos. |
@@ -2286,6 +2609,7 @@ curl -X GET "${API_PUBLIC_URL}/api/platforms/capabilities" \
 | [].fields[].countMode | chars \| bytes \| weighted | — | enum: chars, bytes, weighted | How maxLength is counted: chars, UTF-8 bytes, or X-weighted (URLs count 23). |
 | [].fields[].options[].value | string \| boolean | — | — | Value to send. |
 | [].fields[].options[].label | string | — | — | Human-readable option. |
+| [].fields[].options[].description | string | — | — | Help text for this option. |
 | [].fields[].optionsSource | "youtube.categories" | — | — | Options come from GET /platforms/youtube/{socialConnectionId}/categories. |
 | [].fields[].defaultValue | string \| boolean | — | — | Value the web composer pre-fills (still send it when required). |
 | [].fields[].mediaType | video \| photos | — | enum: video, photos | Field only applies to this media type. |
@@ -2310,6 +2634,11 @@ curl -X GET "${API_PUBLIC_URL}/api/platforms/capabilities" \
 [
   {
     "platform": "youtube",
+    "mentions": {
+      "supported": false,
+      "kind": "handle",
+      "note": "x"
+    },
     "label": "x",
     "supportsVideo": false,
     "supportsPhotos": false,

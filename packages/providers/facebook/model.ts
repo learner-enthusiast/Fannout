@@ -491,6 +491,11 @@ export type PageWebhookPayload = z.infer<typeof PageWebhookPayloadSchema>;
 export const FACEBOOK_MESSAGE_MAX = 63_206;
 
 export const FACEBOOK_COMPOSE: ComposeCapabilities = {
+  mentions: {
+    supported: true,
+    kind: "text_only",
+    note: "Pages only. The Pages API post/photo/video endpoints do not document a Page-mention field for our token, so mentions publish as plain text — Facebook will show this as text, not a tag.",
+  },
   supportsVideo: true,
   supportsPhotos: true,
   maxPhotos: FACEBOOK_ATTACHED_MEDIA_MAX,

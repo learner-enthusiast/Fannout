@@ -21,7 +21,7 @@ const show = (value: unknown) => (value === null || value === undefined || value
 
 export function PostDetail({ postId }: { postId: string }) {
     const utils = trpc.useUtils()
-    const capabilities = trpc.platforms.capabilities.useQuery(undefined, { staleTime: 60 * 60 * 1000 })
+    const capabilities = trpc.platforms.capabilities.useQuery({}, { staleTime: 60 * 60 * 1000 })
     const query = trpc.posts.get.useQuery(
         { postId },
         { staleTime: 0, refetchInterval: (q) => (q.state.data && (q.state.data.status === 'deleting' || q.state.data.editStatus === 'editing') ? 3000 : false) }

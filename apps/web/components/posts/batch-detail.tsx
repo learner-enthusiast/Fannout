@@ -22,7 +22,7 @@ import { onlyWaitingOnSchedule, ScheduleActions, ScheduleSummary } from './sched
 /** One row per account; polls every 3 s until every post has finished. */
 export function BatchDetail({ batchId }: { batchId: string }) {
     const utils = trpc.useUtils()
-    const capabilities = trpc.platforms.capabilities.useQuery(undefined, { staleTime: 60 * 60 * 1000 })
+    const capabilities = trpc.platforms.capabilities.useQuery({}, { staleTime: 60 * 60 * 1000 })
     const query = trpc.posts.batch.useQuery(
         { batchId },
         {

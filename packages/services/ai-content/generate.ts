@@ -19,6 +19,7 @@ export type GenerationResult = {
  * reliably honour JSON-schema lengths, and the SDK helper would reject the
  * whole answer); the platform validators are applied afterwards.
  */
+/** OpenAI structured output: plain field values (models often fail nested { value, … } shapes). */
 function requestSchema(targets: GenerationTarget[], only?: Map<string, AiField[]>) {
   return z.object(
     Object.fromEntries(
@@ -30,7 +31,9 @@ function requestSchema(targets: GenerationTarget[], only?: Map<string, AiField[]
             Object.fromEntries(
               (only?.get(t.key) ?? t.fields).map((f) => [
                 f.name,
-                (f.kind === "tags" ? z.array(z.string()) : z.string()).describe(`${t.platformLabel} ${f.label}`),
+                (f.kind === "tags" ? z.array(z.string()) : z.string()).describe(
+                  `${t.platformLabel} ${f.label}. Apply user instructions in this string; respect limits.`,
+                ),
               ]),
             ),
           ),
@@ -44,6 +47,36 @@ const firstIssue = (error: z.ZodError) => error.issues[0]?.message ?? "Invalid v
 function check(field: AiField, value: unknown): { ok: true; value: unknown } | { ok: false; problem: string } {
   const parsed = field.validator.safeParse(value);
   return parsed.success ? { ok: true, value: parsed.data } : { ok: false, problem: firstIssue(parsed.error) };
+}
+
+type GeneratedEntry = { value?: unknown; instructionApplied?: boolean; note?: string } | unknown;
+
+function entryValue(entry: GeneratedEntry): unknown {
+  return entry && typeof entry === "object" && "value" in entry ? entry.value : entry;
+}
+
+function requiredPrefix(target: GenerationTarget, globalInstruction?: string): string | null {
+  const instructions = [globalInstruction, target.instruction].filter(Boolean).join("\n");
+  // Handles e.g. "Start every title with ‘Interview #10 – ’". The account block comes last and wins conflicts.
+  const matches = [...instructions.matchAll(/start(?:\s+[\p{L}\p{N}#_-]+){0,6}\s+with\s*[‘“"']([^’”"']+)[’”"']/giu)];
+  return matches.at(-1)?.[1] ?? null;
+}
+
+function instructionProblem(target: GenerationTarget, _entry: GeneratedEntry, value: unknown, globalInstruction?: string): string | null {
+  if (!globalInstruction && !target.instruction) return null;
+  const prefix = requiredPrefix(target, globalInstruction);
+  if (prefix && (typeof value !== "string" || !value.startsWith(prefix))) return `The final text must start with ${prefix}`;
+  return null;
+}
+
+function evaluate(target: GenerationTarget, field: AiField, entry: GeneratedEntry, globalInstruction?: string) {
+  const value = entryValue(entry);
+  const checked = check(field, value);
+  if (!checked.ok) return { ok: false as const, value, problem: checked.problem, instruction: false };
+  const problem = instructionProblem(target, entry, checked.value, globalInstruction);
+  return problem
+    ? { ok: false as const, value: checked.value, problem, instruction: true }
+    : { ok: true as const, value: checked.value };
 }
 
 /** Last resort: shorten at a word boundary (tags: drop from the end). */
@@ -72,7 +105,7 @@ export async function runGeneration(params: {
   ai: AiClient;
   targets: GenerationTarget[];
   sources: Sources;
-  instruction?: string;
+  globalInstruction?: string;
   video?: { orientation: string | null; durationSeconds: number | null } | null;
   model?: string;
 }): Promise<GenerationResult> {
@@ -90,15 +123,18 @@ export async function runGeneration(params: {
 
   const output: GenerationResult["output"] = {};
   const issues: GenerationResult["issues"] = [];
-  const failures: { key: string; target: GenerationTarget; field: AiField; value: string; problem: string }[] = [];
+  const failures: { key: string; target: GenerationTarget; field: AiField; value: string; original: unknown; problem: string; instruction: boolean }[] = [];
 
   for (const target of targets) {
     output[target.socialConnectionId] = {};
     for (const field of target.fields) {
-      const value = raw[target.key]?.[field.name];
-      const result = check(field, value);
+      const entry = raw[target.key]?.[field.name];
+      const result = evaluate(target, field, entry, params.globalInstruction);
       if (result.ok) output[target.socialConnectionId]![field.name] = result.value;
-      else failures.push({ key: target.key, target, field, value: Array.isArray(value) ? value.join(", ") : String(value ?? ""), problem: result.problem });
+      else {
+        const text = Array.isArray(result.value) ? result.value.join(", ") : String(result.value ?? "");
+        failures.push({ key: target.key, target, field, value: text, original: result.value, problem: result.problem, instruction: result.instruction });
+      }
     }
   }
 
@@ -109,7 +145,7 @@ export async function runGeneration(params: {
     try {
       const second = await ai.generateStructured({
         system,
-        user: buildRepairPrompt(failures),
+        user: buildRepairPrompt(failures, params.globalInstruction),
         schema: requestSchema(targets, only),
         schemaName: "social_copy_repair",
         model: params.model,
@@ -122,16 +158,21 @@ export async function runGeneration(params: {
     for (const failure of failures) {
       const { target, field } = failure;
       const retried = repaired[failure.key]?.[field.name];
-      const again = retried === undefined ? null : check(field, retried);
+      const again = retried === undefined ? null : evaluate(target, field, retried, params.globalInstruction);
       if (again?.ok) {
         output[target.socialConnectionId]![field.name] = again.value;
         continue;
       }
-      const original = retried ?? (field.kind === "tags" ? failure.value.split(/,\s*/) : failure.value);
+      const instructionFailed = failure.instruction || Boolean(again && !again.ok && again.instruction);
+      const original = retried === undefined ? failure.original : entryValue(retried);
       const fitted = forceFit(field, original);
       const final = check(field, fitted);
       if (final.ok) {
         output[target.socialConnectionId]![field.name] = final.value;
+        if (instructionFailed) {
+          issues.push({ socialConnectionId: target.socialConnectionId, field: field.name, message: "Couldn't apply your instruction within the limit" });
+          continue;
+        }
         const unit = field.countMode === "bytes" ? "bytes" : "characters";
         issues.push({
           socialConnectionId: target.socialConnectionId,
@@ -142,7 +183,11 @@ export async function runGeneration(params: {
               : "Shortened automatically",
         });
       } else {
-        issues.push({ socialConnectionId: target.socialConnectionId, field: field.name, message: `Couldn't generate a valid value: ${final.problem}` });
+        issues.push({
+          socialConnectionId: target.socialConnectionId,
+          field: field.name,
+          message: instructionFailed ? "Couldn't apply your instruction within the limit" : `Couldn't generate a valid value: ${final.problem}`,
+        });
       }
     }
   }

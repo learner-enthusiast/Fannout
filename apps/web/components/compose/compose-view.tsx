@@ -46,6 +46,7 @@ import { InfiniteList } from '~/components/infinite-list'
 import { infiniteOptions, useInfiniteList } from '~/hooks/use-infinite-list'
 
 import { AccountAvatar, AccountCard, accountName } from './account-card'
+import { InstructionControl } from './instruction-control'
 import { MediaPickerDialog } from './media-picker-dialog'
 
 type Connection = RouterOutputs['socialConnections']['list']['items'][number]
@@ -61,12 +62,14 @@ function initialInput(capabilities: Capabilities): Record<string, unknown> {
 
 /** Only fields that apply to the media type, without empty values. */
 function cleanInput(capabilities: Capabilities, mediaType: 'video' | 'photos', input: Record<string, unknown> = {}) {
-    return Object.fromEntries(
+    const cleaned = Object.fromEntries(
         capabilities.fields
             .filter((f) => !f.mediaType || f.mediaType === mediaType)
             .filter((f) => !isEmpty(input[f.name]))
             .map((f) => [f.name, input[f.name]])
     )
+    if (capabilities.platform === 'linkedin' && Array.isArray(input.mentions) && input.mentions.length) cleaned.mentions = input.mentions
+    return cleaned
 }
 
 function SectionCard({
@@ -100,7 +103,7 @@ function SectionCard({
 export function ComposeView() {
     const router = useRouter()
     const utils = trpc.useUtils()
-    const capabilitiesQuery = trpc.platforms.capabilities.useQuery(undefined, { staleTime: 60 * 60 * 1000 })
+    const capabilitiesQuery = trpc.platforms.capabilities.useQuery({}, { staleTime: 60 * 60 * 1000 })
     const connectionsQuery = trpc.socialConnections.list.useInfiniteQuery({}, infiniteOptions({ staleTime: 0 }))
     const connectionList = useInfiniteList(connectionsQuery)
 
@@ -334,6 +337,9 @@ export function ComposeView() {
         // eslint-disable-next-line react-hooks/exhaustive-deps -- react to a finished generation only
     }, [generationQuery.data])
 
+    const instructionFor = (connectionId: string) => draft.accountInstructions[connectionId]?.trim() || undefined
+    const globalInstruction = draft.globalInstruction.trim() || undefined
+
     const startGeneration = async (requested: { socialConnectionId: string; fields?: string[] }[]) => {
         if (!aiEnabled || requested.length === 0) return
         try {
@@ -341,7 +347,11 @@ export function ComposeView() {
                 ...(draft.aiJsonId ? { jsonMediaId: draft.aiJsonId } : {}),
                 ...(draft.aiSubtitleId ? { subtitleMediaId: draft.aiSubtitleId } : {}),
                 ...(draft.mediaType === 'video' && draft.videoId ? { videoMediaId: draft.videoId } : {}),
-                targets: requested,
+                ...(globalInstruction ? { globalInstruction } : {}),
+                targets: requested.map((target) => ({
+                    ...target,
+                    ...(instructionFor(target.socialConnectionId) ? { instruction: instructionFor(target.socialConnectionId) } : {}),
+                })),
             })
             setGeneration({ id: generationId })
         } catch {
@@ -353,6 +363,12 @@ export function ComposeView() {
     const aiTargets = targets.filter((c) => aiFieldsOf(c).length > 0)
     const generateAll = () => void startGeneration(aiTargets.map((c) => ({ socialConnectionId: c.id })))
 
+    const withInstructions = (connectionId: string, fields?: string[]) => ({
+        socialConnectionId: connectionId,
+        ...(fields ? { fields } : {}),
+        ...(instructionFor(connectionId) ? { instruction: instructionFor(connectionId) } : {}),
+    })
+
     const aiFor = (connection: Connection) => (field: string) => {
         const fill = draft.aiFills[connection.id]?.[field]
         return {
@@ -360,7 +376,7 @@ export function ComposeView() {
             busy: aiBusy,
             filled: Boolean(fill && sameValue(draft.inputs[connection.id]?.[field], fill.value)),
             issue: draft.aiIssues[connection.id]?.[field],
-            onGenerate: () => void startGeneration([{ socialConnectionId: connection.id, fields: [field] }]),
+            onGenerate: () => void startGeneration([withInstructions(connection.id, [field])]),
             onUndo: () =>
                 update((d) => {
                     const previous = d.aiFills[connection.id]?.[field]?.previous
@@ -430,15 +446,24 @@ export function ComposeView() {
                 </p>
                 <div className="flex items-center gap-2">
                     {aiEnabled ? (
-                        <Button
-                            variant="secondary"
-                            leftIcon={<SparklesIcon aria-hidden />}
-                            loading={aiBusy}
-                            disabled={aiTargets.length === 0}
-                            onClick={generateAll}
-                        >
-                            Generate All With AI
-                        </Button>
+                        <>
+                            <div className="flex items-center gap-1">
+                                <Button
+                                    variant="secondary"
+                                    leftIcon={<SparklesIcon aria-hidden />}
+                                    loading={aiBusy}
+                                    disabled={aiTargets.length === 0}
+                                    onClick={generateAll}
+                                >
+                                    Generate All With AI
+                                </Button>
+                                <InstructionControl
+                                    value={draft.globalInstruction}
+                                    onChange={(value) => update({ globalInstruction: value })}
+                                    label="Global AI instructions"
+                                />
+                            </div>
+                        </>
                     ) : null}
                     <Button
                         variant="ghost"
@@ -774,6 +799,15 @@ export function ComposeView() {
                                         : undefined
                                 }
                                 aiFor={aiFor(connection)}
+                                instruction={draft.accountInstructions[connection.id] ?? ''}
+                                onInstructionChange={
+                                    aiFieldsOf(connection).length
+                                        ? (value) =>
+                                              update((d) => ({
+                                                  accountInstructions: { ...d.accountInstructions, [connection.id]: value },
+                                              }))
+                                        : undefined
+                                }
                                 headerChip={
                                     <ScheduleChip
                                         schedule={scheduleOf(connection.id)}

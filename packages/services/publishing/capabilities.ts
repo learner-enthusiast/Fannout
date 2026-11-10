@@ -15,6 +15,7 @@ export const ComposeFieldSchema = z.object({
   options: z.array(z.object({
     value: z.union([z.string(), z.boolean()]).describe("Value to send."),
     label: z.string().describe("Human-readable option."),
+    description: z.string().optional().describe("Help text for this option."),
   })).optional().describe("Allowed values for select/radio fields."),
   optionsSource: z.literal("youtube.categories").optional().describe("Options come from GET /platforms/youtube/{socialConnectionId}/categories."),
   defaultValue: z.union([z.string(), z.boolean()]).optional().describe("Value the web composer pre-fills (still send it when required)."),
@@ -27,6 +28,11 @@ export type ComposeField = z.infer<typeof ComposeFieldSchema>;
 
 export const PlatformCapabilitiesSchema = z.object({
   platform: z.enum(["youtube", "x", "linkedin", "threads", "facebook"]).describe("Platform key."),
+  mentions: z.object({
+    supported: z.boolean().describe("Whether the composer can insert mention contacts."),
+    kind: z.enum(["handle", "urn", "page", "text_only"]).describe("How the platform represents mentions."),
+    note: z.string().describe("Syntax and platform limitations."),
+  }).describe("Mention support for the main text field."),
   label: z.string().describe("Platform name."),
   supportsVideo: z.boolean().describe("Can publish a video."),
   supportsPhotos: z.boolean().describe("Can publish photos."),

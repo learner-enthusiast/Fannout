@@ -85,6 +85,13 @@
       "when": 1794124742087,
       "tag": "0011_data_deletion_requests",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1794316697442,
+      "tag": "0012_compose_mentions_ai_instructions",
+      "breakpoints": true
     }
   ]
 }

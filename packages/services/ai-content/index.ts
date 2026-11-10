@@ -1,11 +1,12 @@
 import { AiError, getAiClient, type AiClient } from "@repo/ai";
-import { aiGenerations, and, db, eq, inArray, media, socialConnections } from "@repo/database";
+import { aiGenerations, aiInstructionPresets, and, db, desc, eq, inArray, media, socialConnections } from "@repo/database";
 import { errors } from "@repo/errors";
 import { z } from "zod";
 import { MediaRowSchema, type MediaRow } from "../media/model";
 import { PLATFORMS, platformForProvider } from "../publishing/platforms";
 import { runGeneration, type GenerationTarget } from "./generate";
-import { aiFieldsFor, GenerateInputBaseSchema, GenerationIssueSchema, NO_SOURCE_MESSAGE, type GenerationView } from "./model";
+import { aiFieldsFor, CreateInstructionPresetInputSchema, GenerateInputBaseSchema, GenerationIssueSchema, InstructionPresetViewSchema, ListInstructionPresetsInputSchema, NO_SOURCE_MESSAGE, type GenerationView } from "./model";
+import { afterCursor, cursorTimestamp, toPage } from "../common/pagination";
 import { loadSources, SourceError } from "./sources";
 
 const UuidSchema = z.uuid();
@@ -14,8 +15,8 @@ const StoredInputSchema = z.object({
   jsonMediaId: z.uuid().nullable(),
   subtitleMediaId: z.uuid().nullable(),
   videoMediaId: z.uuid().nullable(),
-  instruction: z.string().nullable(),
-  targets: z.array(z.object({ socialConnectionId: z.uuid(), fields: z.array(z.string()) })),
+  globalInstruction: z.string().nullable(),
+  targets: z.array(z.object({ socialConnectionId: z.uuid(), fields: z.array(z.string()), instruction: z.string().nullable() })),
 });
 
 async function ownedMedia(userId: string, ids: string[]): Promise<Map<string, MediaRow>> {
@@ -62,7 +63,7 @@ export async function createGeneration(userId: string, input: z.input<typeof Gen
     const fields = target.fields ?? available;
     const unknown = fields.filter((f) => !available.includes(f));
     if (unknown.length) return errors.badRequest(`AI can't write ${unknown.join(", ")} for ${PLATFORMS[platform!].label}`);
-    return { socialConnectionId: target.socialConnectionId, fields };
+    return { socialConnectionId: target.socialConnectionId, fields, instruction: target.instruction ?? null };
   });
 
   const scope = data.targets.every((t) => !t.fields)
@@ -79,7 +80,7 @@ export async function createGeneration(userId: string, input: z.input<typeof Gen
         jsonMediaId: data.jsonMediaId ?? null,
         subtitleMediaId: data.subtitleMediaId ?? null,
         videoMediaId: data.videoMediaId ?? null,
-        instruction: data.instruction ?? null,
+        globalInstruction: data.globalInstruction ?? null,
         targets,
       },
     })
@@ -178,6 +179,7 @@ export async function runGenerationJob(id: string, ai: AiClient = getAiClient())
         platformLabel: PLATFORMS[platform].label,
         accountName: connection.displayName ?? connection.username ?? PLATFORMS[platform].label,
         fields,
+        instruction: target.instruction ?? undefined,
         isShort: Boolean(rules.shortMaxSeconds && orientation === "portrait" && (video?.durationSeconds ?? Infinity) <= rules.shortMaxSeconds),
       },
     ];
@@ -188,7 +190,7 @@ export async function runGenerationJob(id: string, ai: AiClient = getAiClient())
     ai,
     targets,
     sources,
-    instruction: input.instruction ?? undefined,
+    globalInstruction: input.globalInstruction ?? undefined,
     video: video ? { orientation: video.metadata?.orientation ?? null, durationSeconds: video.durationSeconds } : null,
   });
 
@@ -208,3 +210,21 @@ export async function runGenerationJob(id: string, ai: AiClient = getAiClient())
     .where(eq(aiGenerations.id, id));
   return { fields: Object.values(result.output).reduce((n, o) => n + Object.keys(o).length, 0), issues: result.issues.length };
 }
+
+export async function listInstructionPresets(userId: string, input: unknown) {
+  const { cursor, limit } = ListInstructionPresetsInputSchema.parse(input);
+  const rows = await db.select({ row: aiInstructionPresets, cursorTs: cursorTimestamp(aiInstructionPresets.createdAt) })
+    .from(aiInstructionPresets)
+    .where(and(eq(aiInstructionPresets.userId, userId), afterCursor(aiInstructionPresets.createdAt, aiInstructionPresets.id, cursor ?? undefined)))
+    .orderBy(desc(aiInstructionPresets.createdAt), desc(aiInstructionPresets.id))
+    .limit(limit + 1);
+  const page = toPage(rows.map(({ row, cursorTs }) => ({ id: row.id, cursorTs, row })), limit);
+  return { items: page.items.map((item) => InstructionPresetViewSchema.parse(item.row)), nextCursor: page.nextCursor };
+}
+
+export async function createInstructionPreset(userId: string, input: unknown) {
+  const data = CreateInstructionPresetInputSchema.parse(input);
+  const [row] = await db.insert(aiInstructionPresets).values({ ...data, userId }).returning();
+  return InstructionPresetViewSchema.parse(row);
+}
+

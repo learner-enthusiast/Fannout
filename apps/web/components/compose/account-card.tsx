@@ -21,6 +21,8 @@ import {
 import { isEmpty, type Capabilities, type ComposeMediaType, type Issue, type MediaLite } from '~/lib/compose'
 
 import { ComposeFieldControl, type FieldAi } from './compose-field'
+import { InstructionControl } from './instruction-control'
+import type { MentionRange } from './mention-editor'
 
 type Connection = RouterOutputs['socialConnections']['list']['items'][number]
 
@@ -68,6 +70,8 @@ export function AccountCard({
     onOverride,
     onCopyFrom,
     aiFor,
+    instruction,
+    onInstructionChange,
     headerChip,
     scheduleSlot,
 }: {
@@ -91,6 +95,8 @@ export function AccountCard({
     onCopyFrom: (sourceId: string) => void
     /** AI state for a field (undefined = no AI for this card). */
     aiFor?: (field: string) => FieldAi
+    instruction?: string
+    onInstructionChange?: (value: string) => void
     /** "Scheduled · …" / "Posts immediately". */
     headerChip?: React.ReactNode
     /** The card's Schedule control. */
@@ -121,6 +127,10 @@ export function AccountCard({
             socialConnectionId={connection.id}
             onChange={(value) => onChange(field.name, value)}
             ai={field.ai ? aiFor?.(field.name) : undefined}
+            platform={capabilities.platform}
+            mentionsEnabled={capabilities.mentions.supported && field.kind === 'textarea'}
+            mentions={Array.isArray(input.mentions) ? (input.mentions as MentionRange[]) : []}
+            onMentionsChange={(ranges) => onChange('mentions', ranges)}
         />
     )
 
@@ -137,6 +147,13 @@ export function AccountCard({
                 </div>
                 <CardAction>
                     <div className="flex items-center gap-2">
+                        {onInstructionChange ? (
+                            <InstructionControl
+                                value={instruction ?? ''}
+                                onChange={onInstructionChange}
+                                label="Instructions for this account"
+                            />
+                        ) : null}
                         {copySources.length > 0 ? (
                             <DropdownMenu>
                                 <DropdownMenuTrigger render={<Button variant="ghost" size="sm" leftIcon={<CopyIcon aria-hidden />} />}>

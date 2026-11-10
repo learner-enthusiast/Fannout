@@ -24,6 +24,7 @@ import {
     TooltipTrigger,
 } from '~/components/ui/tooltip'
 import { xWeight, type ComposeField } from '~/lib/compose'
+import { MentionTextarea, type MentionRange } from './mention-editor'
 import { trpc } from '~/trpc/client'
 
 const NONE = '__none__'
@@ -39,7 +40,7 @@ function OptionSelect({
 }: {
     id: string
     value: string | undefined
-    options: { value: string; label: string }[]
+    options: { value: string; label: string; description?: string }[]
     required: boolean
     loading?: boolean
     onChange: (value: string | undefined) => void
@@ -60,7 +61,10 @@ function OptionSelect({
                     {required ? null : <SelectItem value={NONE}>None</SelectItem>}
                     {options.map((option) => (
                         <SelectItem key={option.value} value={option.value}>
-                            {option.label}
+                            <span className="flex flex-col gap-1">
+                                <span>{option.label}</span>
+                                {option.description ? <span className="text-meta">{option.description}</span> : null}
+                            </span>
                         </SelectItem>
                     ))}
                 </SelectGroup>
@@ -131,6 +135,10 @@ export function ComposeFieldControl({
     socialConnectionId,
     onChange,
     ai,
+    platform,
+    mentionsEnabled = false,
+    mentions = [],
+    onMentionsChange,
 }: {
     field: ComposeField
     value: unknown
@@ -139,6 +147,10 @@ export function ComposeFieldControl({
     onChange: (value: unknown) => void
     /** Only for fields marked ai in the capabilities. */
     ai?: FieldAi
+    platform?: 'youtube' | 'x' | 'linkedin' | 'threads' | 'facebook'
+    mentionsEnabled?: boolean
+    mentions?: MentionRange[]
+    onMentionsChange?: (ranges: MentionRange[]) => void
 }) {
     const showAi = Boolean(field.ai && ai?.enabled)
     const playlists = trpc.platforms.youtubePlaylists.useQuery(
@@ -184,6 +196,18 @@ export function ComposeFieldControl({
             {(p) => {
                 switch (field.kind) {
                     case 'textarea':
+                        if (mentionsEnabled && platform && platform !== 'youtube' && onMentionsChange) {
+                            return (
+                                <MentionTextarea
+                                    {...p}
+                                    platform={platform}
+                                    value={text}
+                                    onChange={(next) => onChange(next || undefined)}
+                                    mentions={mentions}
+                                    onMentionsChange={onMentionsChange}
+                                />
+                            )
+                        }
                         return (
                             <Textarea
                                 {...p}
@@ -211,7 +235,7 @@ export function ComposeFieldControl({
                         const options =
                             field.optionsSource === 'youtube.categories'
                                 ? (categories.data ?? []).map((c) => ({ value: c.id, label: c.title }))
-                                : (field.options ?? []).map((o) => ({ value: String(o.value), label: o.label }))
+                                : (field.options ?? []).map((o) => ({ value: String(o.value), label: o.label, description: o.description }))
                         return (
                             <OptionSelect
                                 id={p.id}

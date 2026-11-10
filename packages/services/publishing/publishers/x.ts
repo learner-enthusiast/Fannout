@@ -25,6 +25,21 @@ import { streamSource } from "./media-source";
 import type { PublishContext, Publisher } from "./types";
 
 const X_MEDIA_TYPES = new Set(["video/mp4", "video/webm", "video/quicktime", "image/jpeg", "image/gif", "image/png", "image/webp"]);
+const X_WRITE_SCOPES = ["tweet.write", "media.write"] as const;
+export const X_RECONNECT_MESSAGE = "Reconnect X to allow posting";
+
+/** Stored grants made before write scopes were requested can never publish. */
+export class XWriteScopeError extends Error {
+  readonly code = "missing_write_scope";
+  constructor() {
+    super(X_RECONNECT_MESSAGE);
+  }
+}
+
+function assertCanPost(ctx: PublishContext) {
+  const scopes = ctx.connection.scopes ?? [];
+  if (X_WRITE_SCOPES.some((scope) => !scopes.includes(scope))) throw new XWriteScopeError();
+}
 /** Re-initialize a media id this close to its expiry rather than post with it. */
 const MEDIA_ID_SAFETY_MS = 4 * 60 * 60 * 1000;
 
@@ -40,6 +55,7 @@ const statusUrl = (id: string, username: string | null | undefined) =>
  */
 export const xPublisher: Publisher<XProvider> = {
   async prepare(provider, ctx): Promise<PrepareStep | void> {
+    assertCanPost(ctx);
     if (ctx.progress.externalPostId) return;
     if (ctx.mediaType !== "video") {
       await uploadAll(provider, ctx);
@@ -51,6 +67,7 @@ export const xPublisher: Publisher<XProvider> = {
   },
 
   async finalize(provider, ctx) {
+    assertCanPost(ctx);
     const input = ctx.input as XComposeInput;
     const username = ctx.connection.username;
     const existing = ctx.progress.externalPostId as string | undefined;
@@ -95,7 +112,7 @@ export const xPublisher: Publisher<XProvider> = {
       const created = await provider.createPost({
         ...(input.text?.trim() ? { text: input.text } : {}),
         media: { mediaIds },
-        ...(input.replySettings ? { replySettings: input.replySettings } : {}),
+        ...(input.replySettings && input.replySettings !== "everyone" ? { replySettings: input.replySettings } : {}),
         ...(input.madeWithAi ? { madeWithAi: true } : {}),
         ...(input.paidPartnership ? { paidPartnership: true } : {}),
       });

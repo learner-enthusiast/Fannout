@@ -12,3 +12,5 @@ export * from "./models/ai-generation";
 export * from "./models/api-key";
 export * from "./models/analytics";
 export * from "./models/data-deletion-request";
+export * from "./models/mention-contact";
+export * from "./models/ai-instruction-preset";

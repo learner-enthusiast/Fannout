@@ -17,23 +17,64 @@ import { PermanentPublishError } from "./errors";
 import { PostConfigSchema, TERMINAL_STATUSES } from "./model";
 import { PLATFORMS } from "./platforms";
 import { failSchedule } from "../scheduling";
+import { recordMentionsUsed } from "../mentions";
 import { FacebookPublishError, MISSING_VIDEO_PERMISSION_MESSAGE, facebookPublisher } from "./publishers/facebook";
 import { LINKEDIN_MISSING_SHARE_MESSAGE, LinkedInPublishError, linkedinPublisher } from "./publishers/linkedin";
 import { threadsPublisher } from "./publishers/threads";
 import type { PublishContext, PublishOutcome, Publisher } from "./publishers/types";
 import type { PrepareStep } from "./upload/progress";
-import { xPublisher } from "./publishers/x";
+import { XWriteScopeError, xPublisher } from "./publishers/x";
 import { youtubePublisher } from "./publishers/youtube";
 
 export type ErrorKind = "auth" | "permanent" | "transient";
 
+function providerBody(error: ProviderError): string {
+  try {
+    return `${error.providerCode ?? ""} ${error.message} ${JSON.stringify(error.details ?? {})}`;
+  } catch {
+    return `${error.providerCode ?? ""} ${error.message}`;
+  }
+}
+
+function classifyXError(error: ProviderError): { kind: ErrorKind; code: string; message: string } | null {
+  if (error.provider !== "X") return null;
+  const body = providerBody(error);
+  const detail = typeof (error.details as { detail?: unknown } | undefined)?.detail === "string"
+    ? String((error.details as { detail: string }).detail)
+    : error.message;
+  if (error.status === 400 && /reply.?settings/i.test(body)) {
+    return { kind: "permanent", code: "invalid_reply_settings", message: "X rejected the reply audience. Choose Everyone or another supported audience." };
+  }
+  if (error.status !== 403) return null;
+  // Ordered from most specific to least: enrollment, duplicates, grants, then account restrictions.
+  if (/client forbidden|required_enrollment|registration_url|project.*enroll|pay-per-use/i.test(body)) {
+    return {
+      kind: "permanent",
+      code: "x_project_enrollment_required",
+      message: "Your X app must be attached to a project enrolled in pay-per-use billing. Fix this in console.x.com, then retry.",
+    };
+  }
+  if (/duplicate content|duplicate tweet|already.?live|already posted/i.test(body)) {
+    return { kind: "permanent", code: "duplicate_content", message: "X says this content was already posted. Check the account before retrying; this post will not be sent again." };
+  }
+  if (/missing.*(scope|permission)|scope.*(missing|required)|not authorized.*(post|tweet|media|write)|permission.*(post|tweet|media|write)/i.test(body)) {
+    return { kind: "auth", code: "missing_write_scope", message: "Reconnect X to allow posting" };
+  }
+  if (/restrict|suspend|reply.*not allowed|not allowed.*reply|account.*limit/i.test(body)) {
+    return { kind: "permanent", code: "x_account_restricted", message: `X rejected this post: ${detail}` };
+  }
+  return { kind: "permanent", code: error.code, message: `X rejected this request: ${detail}` };
+}
 
 /** Auth → reconnect + fail; permanent (validation, bad request…) → fail; else retry. */
 export function classifyPublishError(error: unknown): { kind: ErrorKind; code: string; message: string } {
   const message = (error instanceof Error && error.message ? error.message : "Publishing failed").slice(0, 500);
+  if (error instanceof XWriteScopeError) return { kind: "auth", code: error.code, message: error.message };
   if (error instanceof FacebookPublishError) return { kind: "permanent", code: error.code, message: error.message };
   if (error instanceof LinkedInPublishError) return { kind: "permanent", code: error.code, message: error.message };
   if (error instanceof ProviderError) {
+    const x = classifyXError(error);
+    if (x) return x;
     // "(#100) No permission to publish the video" (also #200 publish_video): permission, not a glitch.
     if (error.provider === "FACEBOOK" && /permission to publish the video|publish_video/i.test(error.message)) {
       return { kind: "permanent", code: "missing_video_permission", message: MISSING_VIDEO_PERMISSION_MESSAGE };
@@ -218,6 +259,8 @@ export async function runPublishPhase(postId: string, phase: PublishPhase, optio
       })
       .where(eq(posts.id, post.id));
     await saveConfigProgress(post.id, {}, "Published");
+    // Mention counters are ancillary; never turn an already-live post into a failure.
+    await recordMentionsUsed(post.userId, config.platform, input).catch(() => undefined);
     return outcome;
   } catch (error) {
     if (error instanceof PermanentPublishError) {

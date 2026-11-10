@@ -594,6 +594,11 @@ export type ThreadsWebhookEvent = z.infer<typeof ThreadsWebhookEventSchema>;
 
 
 export const THREADS_COMPOSE: ComposeCapabilities = {
+  mentions: {
+    supported: true,
+    kind: "handle",
+    note: "Use @username in post text. Threads renders plain-text handles; no profile lookup API is used.",
+  },
   supportsVideo: true,
   supportsPhotos: true,
   maxPhotos: THREADS_CAROUSEL.max,

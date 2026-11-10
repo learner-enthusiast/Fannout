@@ -47,6 +47,32 @@ function assertCanPost(ctx: PublishContext) {
   }
 }
 
+function validMentionRanges(input: LinkedInComposeInput) {
+  const text = input.commentary ?? "";
+  let previousEnd = 0;
+  const ranges = [];
+  for (const range of [...(input.mentions ?? [])].sort((a, b) => a.start - b.start)) {
+    if (range.start < previousEnd || range.start + range.length > text.length) continue;
+    if (text.slice(range.start, range.start + range.length) !== `@${range.displayName}`) continue;
+    ranges.push(range);
+    previousEnd = range.start + range.length;
+  }
+  return ranges;
+}
+
+function littleTextEscape(value: string) {
+  return value.replace(/[\\{}@\[\]()<>#|*_~]/g, "\\$&");
+}
+
+function communityCommentary(input: LinkedInComposeInput) {
+  let text = input.commentary ?? "";
+  const ranges = validMentionRanges(input).sort((a, b) => b.start - a.start);
+  for (const range of ranges) {
+    text = `${text.slice(0, range.start)}@[${littleTextEscape(range.displayName)}](${range.platformRef})${text.slice(range.start + range.length)}`;
+  }
+  return text;
+}
+
 /**
  * prepare: register + upload every asset and wait until AVAILABLE (UGC), or
  * upload video/images (Community API). finalize: create the post.
@@ -99,6 +125,11 @@ async function postUgc(provider: LinkedInProvider, ctx: PublishContext) {
   return provider.createUgcPost({
     author,
     commentary: input.commentary ?? "",
+    attributes: validMentionRanges(input).map((range) => ({
+      start: range.start,
+      length: range.length,
+      value: range.platformRef.startsWith("urn:li:person:") ? { person: range.platformRef } : { organization: range.platformRef },
+    })),
     visibility: input.visibility,
     mediaCategory: kind === "video" ? "VIDEO" : "IMAGE",
     media: assets.map((asset) => ({ asset, ...(kind === "video" && input.videoTitle ? { title: input.videoTitle } : {}) })),
@@ -138,7 +169,7 @@ async function postCommunity(provider: LinkedInProvider, ctx: PublishContext) {
   const author = `urn:li:person:${ctx.connection.providerAccountId}`;
   const common = {
     author,
-    commentary: input.commentary ?? "",
+    commentary: communityCommentary(input),
     visibility: input.visibility,
     distribution: { feedDistribution: "MAIN_FEED" as const },
     ...(input.isReshareDisabledByAuthor ? { isReshareDisabledByAuthor: true } : {}),

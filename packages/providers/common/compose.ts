@@ -15,7 +15,7 @@ export type ComposeFieldKind = z.infer<typeof ComposeFieldKindSchema>;
 export const ComposeCountModeSchema = z.enum(["chars", "bytes", "weighted"]);
 export type ComposeCountMode = z.infer<typeof ComposeCountModeSchema>;
 
-export type ComposeFieldOption = { value: string | boolean; label: string };
+export type ComposeFieldOption = { value: string | boolean; label: string; description?: string };
 
 export type ComposeFieldMeta = {
   label: string;
@@ -61,6 +61,11 @@ export type ComposeMediaRules = {
 };
 
 export type ComposeCapabilities = {
+  mentions: {
+    supported: boolean;
+    kind: "handle" | "urn" | "page" | "text_only";
+    note: string;
+  };
   supportsVideo: boolean;
   supportsPhotos: boolean;
   maxPhotos: number;
