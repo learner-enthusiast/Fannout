@@ -49,6 +49,16 @@ import { MANUAL_REFRESH_INTERVAL_MS } from "./sync";
 const DAY_MS = 24 * 60 * 60 * 1000;
 const RANGE_DAYS = { "7d": 7, "28d": 28, "90d": 90 } as const;
 
+/** Intl accepts some legacy ids that PostgreSQL's tzdata does not (e.g. Asia/Calcutta). */
+const POSTGRES_TIMEZONE_ALIASES: Record<string, string> = {
+  "Asia/Calcutta": "Asia/Kolkata",
+};
+
+/** IANA zone id safe for `AT TIME ZONE` in raw SQL. */
+export function postgresTimeZone(timeZone: string): string {
+  return POSTGRES_TIMEZONE_ALIASES[timeZone] ?? timeZone;
+}
+
 const addDays = (date: string, days: number) => new Date(Date.parse(`${date}T00:00:00Z`) + days * DAY_MS).toISOString().slice(0, 10);
 const todayIn = (timeZone: string) => new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 
@@ -208,23 +218,25 @@ function aggregate(values: (number | undefined)[], agg: "sum" | "avg" | "last") 
 /** Latest snapshot per post for posts published in [from, to] (dates in timeZone). */
 async function latestPostMetrics(userId: string, connectionIds: string[], from: string, to: string, timeZone: string) {
   if (connectionIds.length === 0) return [];
+  const zone = postgresTimeZone(timeZone);
   const result = await db.execute<{ post_id: string; metrics: Metrics; published_at: string }>(sql`
     select distinct on (s.post_id) s.post_id, s.metrics, p.published_at
     from ${analyticsPostSnapshots} s
     join ${posts} p on p.id = s.post_id
     where p.user_id = ${userId}
       and p.social_connection_id in ${connectionIds}
-      and (p.published_at at time zone ${timeZone})::date between ${from}::date and ${to}::date
+      and (p.published_at at time zone ${zone})::date between ${from}::date and ${to}::date
     order by s.post_id, s.captured_at desc`);
   return result.rows.map((r) => ({ postId: r.post_id, metrics: MetricsSchema.parse(r.metrics), publishedAt: r.published_at }));
 }
 
 async function publishCounts(userId: string, connectionIds: string[], from: string, to: string, timeZone: string) {
   if (connectionIds.length === 0) return { published: 0, failed: 0 };
+  const zone = postgresTimeZone(timeZone);
   const result = await db.execute<{ published: string; failed: string }>(sql`
     select
-      count(*) filter (where status = 'published' and (published_at at time zone ${timeZone})::date between ${from}::date and ${to}::date) as published,
-      count(*) filter (where status = 'failed' and (updated_at at time zone ${timeZone})::date between ${from}::date and ${to}::date) as failed
+      count(*) filter (where status = 'published' and (published_at at time zone ${zone})::date between ${from}::date and ${to}::date) as published,
+      count(*) filter (where status = 'failed' and (updated_at at time zone ${zone})::date between ${from}::date and ${to}::date) as failed
     from ${posts}
     where user_id = ${userId} and social_connection_id in ${connectionIds}`);
   const row = result.rows[0];

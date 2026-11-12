@@ -3,8 +3,9 @@
   "private": true,
   "scripts": {
     "build": "dotenv -- turbo build",
+    "start": "dotenv -e .env -- turbo start",
     "dev": "turbo dev",
-    "inngest:dev": "npx inngest-cli@latest dev",
+    "inngest:dev": "npx --ignore-scripts=false inngest-cli@latest dev",
     "db:generate": "dotenv -- turbo db:generate",
     "db:migrate": "dotenv -- turbo db:migrate",
     "db:reset": "dotenv -- turbo db:reset",
