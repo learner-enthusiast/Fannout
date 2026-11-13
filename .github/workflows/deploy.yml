@@ -1,0 +1,84 @@
+# SSH deploy as the SSH user (e.g. arnab): pnpm steps never use sudo.
+# Only `sudo -n systemctl …` restarts the app (passwordless for deploy user).
+#
+# Secrets: SSH_HOST, SSH_USER, SSH_PRIVATE_KEY, DEPLOY_PATH,
+#          CF_SERVICE_TOKEN_ID, CF_SERVICE_TOKEN_SECRET
+#
+# Server setup:
+#   - git clone at DEPLOY_PATH (this repo), root `.env` (not committed)
+#   - Node 18+, pnpm 9, Postgres/Redis reachable from `.env`
+#   - systemd unit `fannout` (example below) runs `pnpm start` from DEPLOY_PATH
+#
+# Example unit: /etc/systemd/system/fannout.service
+#   [Service]
+#   WorkingDirectory=/home/arnab/deploy/fannout
+#   EnvironmentFile=/home/arnab/deploy/fannout/.env
+#   ExecStart=/home/arnab/.local/share/pnpm/pnpm start
+#   Restart=on-failure
+
+name: Deploy
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install cloudflared
+        run: |
+          curl -L --fail \
+            https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb \
+            -o cloudflared.deb
+          sudo dpkg -i cloudflared.deb || sudo apt-get install -f -y
+
+      - name: Configure SSH
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          CF_SERVICE_TOKEN_ID: ${{ secrets.CF_SERVICE_TOKEN_ID }}
+          CF_SERVICE_TOKEN_SECRET: ${{ secrets.CF_SERVICE_TOKEN_SECRET }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          cat > ~/.ssh/config <<EOF
+          Host homeserver
+            HostName ${SSH_HOST}
+            User ${SSH_USER}
+            IdentityFile ~/.ssh/deploy_key
+            IdentitiesOnly yes
+            ProxyCommand cloudflared access ssh --hostname %h
+            StrictHostKeyChecking accept-new
+            ConnectTimeout 30
+          EOF
+          chmod 600 ~/.ssh/config
+          {
+            echo "TUNNEL_SERVICE_TOKEN_ID<<EOF"
+            echo "$CF_SERVICE_TOKEN_ID"
+            echo "EOF"
+            echo "TUNNEL_SERVICE_TOKEN_SECRET<<EOF"
+            echo "$CF_SERVICE_TOKEN_SECRET"
+            echo "EOF"
+          } >> "$GITHUB_ENV"
+
+      - name: Deploy on server
+        env:
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+        run: |
+          set -euo pipefail
+          ssh homeserver "DEPLOY_PATH='${DEPLOY_PATH}' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd "${DEPLOY_PATH:?}"
+          # Mirror origin/main exactly (survives force-pushes; untracked .env is untouched).
+          git fetch origin main && git checkout -B main origin/main && git reset --hard origin/main
+          pnpm install --frozen-lockfile
+          pnpm run db:migrate:deploy
+          pnpm run build
+          sudo -n systemctl restart fannout
+          sudo -n systemctl is-active fannout
+          REMOTE

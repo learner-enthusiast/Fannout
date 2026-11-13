@@ -9,15 +9,25 @@ const envSchema = z.object({
   INNGEST_APP_ID: z.string().default("fannout"),
   INNGEST_EVENT_KEY: z.string().optional(),
   INNGEST_SIGNING_KEY: z.string().optional(),
+  INNGEST_DEV: z.string().optional(),
 });
 
-function createEnv(env: NodeJS.ProcessEnv) {
-  const parsed = envSchema.safeParse(env);
+/** Local Inngest dev server (`INNGEST_DEV=1` or a dev server URL). Independent of NODE_ENV. */
+export function isInngestDevEnabled(raw: NodeJS.ProcessEnv): boolean {
+  const value = raw.INNGEST_DEV;
+  if (value === undefined || value === "") return false;
+  if (value === "0" || value === "false") return false;
+  return true;
+}
+
+function createEnv(raw: NodeJS.ProcessEnv) {
+  const parsed = envSchema.safeParse(raw);
   if (!parsed.success) throw new Error(parsed.error.message);
-  if (parsed.data.NODE_ENV === "prod" && !parsed.data.INNGEST_SIGNING_KEY) {
-    throw new Error("INNGEST_SIGNING_KEY is required in prod");
+  const inngestDev = isInngestDevEnabled(raw);
+  if (parsed.data.NODE_ENV === "prod" && !inngestDev && !parsed.data.INNGEST_SIGNING_KEY) {
+    throw new Error("INNGEST_SIGNING_KEY is required in prod when INNGEST_DEV is not enabled");
   }
-  return parsed.data;
+  return { ...parsed.data, inngestDev };
 }
 
 export const env = createEnv(process.env);
