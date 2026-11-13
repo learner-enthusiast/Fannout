@@ -39,6 +39,9 @@
     },
     "db:generate": {},
     "db:migrate": {},
+    "db:migrate:deploy": {
+      "cache": false
+    },
     "test": {},
     "db:reset": {
       "cache": false

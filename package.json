@@ -8,6 +8,7 @@
     "inngest:dev": "npx --ignore-scripts=false inngest-cli@latest dev",
     "db:generate": "dotenv -- turbo db:generate",
     "db:migrate": "dotenv -- turbo db:migrate",
+    "db:migrate:deploy": "dotenv -e .env -- turbo db:migrate:deploy",
     "db:reset": "dotenv -- turbo db:reset",
     "lint": "turbo run lint",
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",

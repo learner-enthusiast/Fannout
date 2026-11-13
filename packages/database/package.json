@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "scripts": {
     "db:migrate": "dotenv -e ../../.env -- drizzle-kit migrate",
+    "db:migrate:deploy": "dotenv -e ../../.env -- tsx scripts/migrate-deploy.ts",
     "db:generate": "dotenv -e ../../.env -- drizzle-kit generate",
     "dev": "dotenv -e ../../.env -- drizzle-kit studio",
     "db:drop": "dotenv -e ../../.env -- tsx scripts/reset.ts",
