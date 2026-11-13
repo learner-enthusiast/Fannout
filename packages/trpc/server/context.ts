@@ -17,7 +17,8 @@ export async function createContext({ req, res }: CreateExpressContextOptions) {
     if (await isAuthBlocked(ip)) {
       return { userId: null, apiKey: null, apiKeyError: "blocked" as const, ip, res };
     }
-    const principal = await verifyApiKey(match[1]!, ip);
+    // Writes check the key in Postgres directly; only reads may use the 5-minute cached lookup.
+    const principal = await verifyApiKey(match[1]!, ip, new Date(), { fresh: req.method !== "GET" && req.method !== "HEAD" });
     if (!principal) {
       await penalizeAuthFail(ip);
       return { userId: null, apiKey: null, apiKeyError: "invalid" as const, ip, res };

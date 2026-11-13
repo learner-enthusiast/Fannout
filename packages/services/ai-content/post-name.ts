@@ -1,3 +1,4 @@
+import { invalidate } from "../cache";
 import { getAiClient, type AiClient } from "@repo/ai";
 import { logger } from "@repo/logger";
 import { asc, db, eq, media, posts } from "@repo/database";
@@ -100,5 +101,6 @@ export async function nameBatchWithAi(batchId: string, ai?: AiClient) {
 
   const { name, byAi } = await generatePostName({ ai, json, titles });
   await db.update(posts).set({ name, updatedAt: new Date() }).where(eq(posts.batchId, batchId));
+  await invalidate(rows[0]!.userId, "posts");
   return { named: rows.length, byAi };
 }

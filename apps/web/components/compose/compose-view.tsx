@@ -47,7 +47,7 @@ import { infiniteOptions, useInfiniteList } from '~/hooks/use-infinite-list'
 
 import { AccountAvatar, AccountCard, accountName } from './account-card'
 import { InstructionControl } from './instruction-control'
-import { MediaPickerDialog } from './media-picker-dialog'
+import { MediaPickerDialog, preloadMediaPicker } from './media-picker-lazy'
 
 type Connection = RouterOutputs['socialConnections']['list']['items'][number]
 type AiFill = { connectionId: string; field: string; value: unknown }
@@ -179,6 +179,12 @@ export function ComposeView() {
     const update = (patch: Partial<ComposeDraft> | ((d: ComposeDraft) => Partial<ComposeDraft>)) =>
         setDraft((current) => ({ ...current, ...(typeof patch === 'function' ? patch(current) : patch) }))
 
+    // Intent prefetch: warm the picker chunk and its first page of media before it opens.
+    const warmPicker = (type: 'video' | 'image') => {
+        preloadMediaPicker()
+        void utils.media.list.prefetchInfinite({ type }, { staleTime: 10_000 })
+    }
+
     const toggleAccount = (connection: Connection, checked: boolean) =>
         update((d) => {
             const caps = capsFor(connection)
@@ -207,6 +213,7 @@ export function ComposeView() {
             type: item.media.type,
             status: item.media.status,
             url: item.media.previewUrl,
+            thumbUrl: item.media.thumbUrl,
             orientation: item.media.orientation,
             durationSeconds: item.media.durationSeconds,
             width: item.media.width,
@@ -582,7 +589,7 @@ export function ComposeView() {
                         <div className="flex flex-wrap items-center gap-4">
                             {video ? (
                                 <span className="w-48 overflow-hidden rounded-control border border-border">
-                                    <MediaPreview type="video" url={video.url} alt={video.name} />
+                                    <MediaPreview type="video" url={video.url} thumbUrl={video.thumbUrl} alt={video.name} />
                                 </span>
                             ) : null}
                             <div className="flex min-w-0 flex-1 flex-col gap-1">
@@ -593,7 +600,7 @@ export function ComposeView() {
                                     </span>
                                 ) : null}
                             </div>
-                            <Button variant="secondary" leftIcon={<FilmIcon aria-hidden />} onClick={() => setPicker({ kind: 'video' })}>
+                            <Button variant="secondary" leftIcon={<FilmIcon aria-hidden />} onPointerEnter={() => warmPicker('video')} onFocus={() => warmPicker('video')} onClick={() => setPicker({ kind: 'video' })}>
                                 {video ? 'Change Video' : 'Choose Video'}
                             </Button>
                         </div>
@@ -603,7 +610,7 @@ export function ComposeView() {
                         <div className="flex items-center gap-2 rounded-surface border border-border bg-background p-4">
                             {sharedThumb ? (
                                 <span className="w-16 shrink-0 overflow-hidden rounded-control border border-border">
-                                    <MediaPreview type="image" url={sharedThumb.url} alt={sharedThumb.name} />
+                                    <MediaPreview type="image" url={sharedThumb.url} thumbUrl={sharedThumb.thumbUrl} alt={sharedThumb.name} />
                                 </span>
                             ) : (
                                 <ImageIcon aria-hidden className="size-4 text-muted-foreground" />
@@ -628,7 +635,7 @@ export function ComposeView() {
                                     <XIcon aria-hidden />
                                 </Button>
                             ) : null}
-                            <Button variant="secondary" size="sm" onClick={() => setPicker({ kind: 'thumbnail', connectionId: null })}>
+                            <Button variant="secondary" size="sm" onPointerEnter={() => warmPicker('image')} onFocus={() => warmPicker('image')} onClick={() => setPicker({ kind: 'thumbnail', connectionId: null })}>
                                 {draft.thumbnailAll ? 'Change' : 'Choose'}
                             </Button>
                         </div>
@@ -659,7 +666,7 @@ export function ComposeView() {
                                                 dragId === photo.id && 'opacity-50'
                                             )}
                                         >
-                                            <MediaPreview type="image" url={photo.url} alt={photo.name} />
+                                            <MediaPreview type="image" url={photo.url} thumbUrl={photo.thumbUrl} alt={photo.name} />
                                             <span className="absolute top-1 start-1 flex items-center gap-1 rounded-control bg-popover px-1 text-mono">
                                                 <GripVerticalIcon aria-hidden className="size-3" />
                                                 {index + 1}
@@ -679,7 +686,7 @@ export function ComposeView() {
                                 </ol>
                             ) : null}
                             <div>
-                                <Button variant="secondary" leftIcon={<ImagesIcon aria-hidden />} onClick={() => setPicker({ kind: 'photos' })}>
+                                <Button variant="secondary" leftIcon={<ImagesIcon aria-hidden />} onPointerEnter={() => warmPicker('image')} onFocus={() => warmPicker('image')} onClick={() => setPicker({ kind: 'photos' })}>
                                     {photos.length ? 'Change Photos' : 'Choose Photos'}
                                 </Button>
                             </div>
@@ -916,6 +923,7 @@ export function ComposeView() {
                             type: item.media.type,
                             status: item.media.status,
                             url: item.media.previewUrl,
+            thumbUrl: item.media.thumbUrl,
                             orientation: item.media.orientation,
                             durationSeconds: item.media.durationSeconds,
                             width: item.media.width,

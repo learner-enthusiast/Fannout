@@ -17,6 +17,8 @@ export type ProviderCredentials = {
   scopes: string;
   /** Versioned APIs (Meta Graph API, e.g. "v23.0"). */
   apiVersion?: string;
+  /** Facebook Login for Business configuration id (Instagram). Sent instead of `scope`. */
+  configId?: string;
 };
 
 export type ResolveAccountsInput = {
@@ -46,6 +48,10 @@ export interface OAuthProviderAdapter {
   extraAuthorizationParams: Record<string, string>;
   /** Joiner for the `scope` parameter. Default " "; Meta uses ",". */
   scopeSeparator?: string;
+  /** Never send `scope` (Meta rejects it for config_id logins; permissions come from the configuration). */
+  omitScopeParam?: boolean;
+  /** Save one connection per returned account (all sharing the grant token) instead of asking the user to pick. */
+  connectsAllAccounts?: boolean;
 
   /** Adjust HTTP for token-endpoint quirks (e.g. Threads omits token_type). */
   wrapHttp?(http: HttpOptions): HttpOptions;

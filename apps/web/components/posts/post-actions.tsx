@@ -6,7 +6,7 @@ import { useState } from 'react'
 import { toast } from 'sonner'
 
 import { ComposeFieldControl } from '~/components/compose/compose-field'
-import { MediaPickerDialog } from '~/components/compose/media-picker-dialog'
+import { MediaPickerDialog } from '~/components/compose/media-picker-lazy'
 import { Alert, AlertDescription } from '~/components/ui/alert'
 import { Badge } from '~/components/ui/badge'
 import { Button } from '~/components/ui/button'
@@ -141,7 +141,7 @@ export function PostActions({
                 >
                     Edit
                 </Button>
-            ) : (
+            ) : canDelete ? (
                 <Tooltip>
                     <TooltipTrigger
                         render={
@@ -152,7 +152,10 @@ export function PostActions({
                     </TooltipTrigger>
                     <TooltipContent>{capabilities?.editNote ?? "This platform can't edit posts"}</TooltipContent>
                 </Tooltip>
-            )}
+            ) : capabilities?.deleteNote ? (
+                // Neither edit nor delete via API (Instagram): say where to do it.
+                <span className="text-meta">{capabilities.deleteNote}</span>
+            ) : null}
             {canDelete ? (
                 <Button
                     variant="destructive"

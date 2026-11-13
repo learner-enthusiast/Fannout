@@ -1,14 +1,15 @@
 import {
     AtSignIcon,
     FacebookIcon,
+    InstagramIcon,
     LinkedinIcon,
     TwitterIcon,
     YoutubeIcon,
     type LucideIcon,
 } from 'lucide-react'
 
-export type ProviderSlug = 'linkedin' | 'x' | 'youtube' | 'facebook' | 'threads'
-export type ProviderValue = 'LINKEDIN' | 'X' | 'YOUTUBE' | 'FACEBOOK' | 'THREADS'
+export type ProviderSlug = 'linkedin' | 'x' | 'youtube' | 'facebook' | 'threads' | 'instagram'
+export type ProviderValue = 'LINKEDIN' | 'X' | 'YOUTUBE' | 'FACEBOOK' | 'THREADS' | 'INSTAGRAM'
 
 export const providers: {
     slug: ProviderSlug
@@ -52,6 +53,13 @@ export const providers: {
         description: 'Your Threads profile.',
         icon: AtSignIcon,
     },
+    {
+        slug: 'instagram',
+        value: 'INSTAGRAM',
+        name: 'Instagram',
+        description: 'Instagram Business or Creator accounts you share.',
+        icon: InstagramIcon,
+    },
 ]
 
 /** User-facing text for the `reason` the API puts on failed callbacks. */
@@ -67,6 +75,16 @@ export const failureMessages: Record<string, string> = {
         'No account was found. YouTube needs a channel and Facebook needs a Page you manage.',
     not_configured: 'This provider is not set up yet.',
     id_token_invalid: 'The provider response could not be verified.',
+}
+
+/** Reason texts that differ per provider (looked up before `failureMessages`). */
+export const providerFailureMessages: Partial<Record<ProviderSlug, Record<string, string>>> = {
+    instagram: {
+        no_account:
+            'No Instagram professional account was shared. It must be a Business or Creator account inside the business portfolio you selected.',
+        insufficient_scope:
+            'Instagram permissions were missing. Reconnect and allow every requested permission, including content publishing.',
+    },
 }
 
 export const defaultFailureMessage = 'The account could not be connected. Please try again.'

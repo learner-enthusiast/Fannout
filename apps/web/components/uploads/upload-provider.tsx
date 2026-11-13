@@ -15,6 +15,17 @@ import { toast } from 'sonner'
 import { formatBytes, mediaKind, type UploadKind } from '~/lib/media-format'
 import { trpc } from '~/trpc/client'
 
+import {
+    ACTIVE_STATUSES,
+    createUploadStore,
+    selectActiveCount,
+    selectCount,
+    selectItems,
+    selectStructure,
+    useUploadSelector,
+    type UploadStore,
+} from './upload-store'
+
 /**
  * Background uploads. Mounted once in the (app) layout so uploads keep going
  * across route changes. Files go straight to S3 as multipart uploads
@@ -51,10 +62,12 @@ export type EnqueueOptions = {
     onReady?: (mediaId: string) => void | Promise<void>
 }
 
+/**
+ * The context value is STABLE (store + memoized actions). Progress is never in
+ * context: read it through useUploadItems / useUploadActiveCount / useUploadCount.
+ */
 type UploadContextValue = {
-    items: UploadItem[]
-    /** Number of items still queued, uploading or processing. */
-    activeCount: number
+    store: UploadStore
     /** Files (or { file, name } for a custom display name) join the queue. */
     enqueue: (files: (File | UploadEntry)[], options?: EnqueueOptions) => void
     cancel: (id: string) => void
@@ -73,7 +86,7 @@ const POLL_MS = 3000
 const POLL_GIVE_UP_MS = 15 * 60 * 1000
 
 const IN_FLIGHT: UploadStatus[] = ['queued', 'uploading']
-const ACTIVE: UploadStatus[] = ['queued', 'uploading', 'processing']
+const ACTIVE = ACTIVE_STATUSES
 
 class FatalUploadError extends Error {}
 
@@ -163,18 +176,21 @@ function errorMessage(error: unknown) {
 
 export function UploadProvider({ children }: { children: ReactNode }) {
     const utils = trpc.useUtils()
-    const [items, setItems] = useState<UploadItem[]>([])
+    const [store] = useState(createUploadStore)
     const files = useRef(new Map<string, { file: File; name?: string; mimeType: string }>())
     const options = useRef(new Map<string, EnqueueOptions>())
     const controllers = useRef(new Map<string, AbortController>())
     const started = useRef(new Set<string>())
     const processingSince = useRef(new Map<string, number>())
 
-    const patch = useCallback((id: string, update: Partial<UploadItem>) => {
-        setItems((current) =>
-            current.map((item) => (item.id === id ? { ...item, ...update } : item))
-        )
-    }, [])
+    const patch = useCallback(
+        (id: string, update: Partial<UploadItem>) => {
+            store.update((current) =>
+                current.map((item) => (item.id === id ? { ...item, ...update } : item))
+            )
+        },
+        [store]
+    )
 
     const afterFinish = useCallback(() => {
         void utils.media.list.invalidate()
@@ -226,7 +242,7 @@ export function UploadProvider({ children }: { children: ReactNode }) {
                             if (now - lastReport > 200) {
                                 lastReport = now
                                 const sent = loaded.reduce((a, b) => a + b, 0)
-                                patch(item.id, { progress: Math.min(0.99, sent / file.size) })
+                                store.setProgress(item.id, Math.min(0.99, sent / file.size))
                             }
                         })
                     )
@@ -252,11 +268,13 @@ export function UploadProvider({ children }: { children: ReactNode }) {
                 files.current.delete(item.id)
             }
         },
-        [utils, patch, failOnServer, afterFinish]
+        [utils, patch, store, failOnServer, afterFinish]
     )
 
     // Queue pump: keep up to MAX_FILES uploading.
+    const structure = useUploadSelector(store, selectStructure)
     useEffect(() => {
+        const items = store.get()
         let active = items.filter((item) => item.status === 'uploading').length
         for (const item of items) {
             if (active >= MAX_FILES) break
@@ -266,13 +284,15 @@ export function UploadProvider({ children }: { children: ReactNode }) {
             patch(item.id, { status: 'uploading' })
             void upload(item)
         }
-    }, [items, patch, upload])
+    }, [structure, store, patch, upload])
 
     // Processing → ready/failed: poll the media until Inngest is done.
-    const processingIds = items
-        .filter((item) => item.status === 'processing' && item.mediaId)
-        .map((item) => `${item.id}:${item.mediaId}`)
-        .join(',')
+    const processingIds = useUploadSelector(store, (items) =>
+        items
+            .filter((item) => item.status === 'processing' && item.mediaId)
+            .map((item) => `${item.id}:${item.mediaId}`)
+            .join(',')
+    )
     useEffect(() => {
         if (!processingIds) return
         const timer = setInterval(() => {
@@ -308,7 +328,7 @@ export function UploadProvider({ children }: { children: ReactNode }) {
     }, [processingIds, utils, patch, afterFinish])
 
     // Warn before leaving only while bytes are still being sent.
-    const uploading = items.some((item) => IN_FLIGHT.includes(item.status))
+    const uploading = useUploadSelector(store, (items) => items.some((item) => IN_FLIGHT.includes(item.status)))
     useEffect(() => {
         if (!uploading) return
         const handler = (event: BeforeUnloadEvent) => {
@@ -319,7 +339,8 @@ export function UploadProvider({ children }: { children: ReactNode }) {
         return () => window.removeEventListener('beforeunload', handler)
     }, [uploading])
 
-    const enqueue = useCallback((list: (File | UploadEntry)[], opts?: EnqueueOptions) => {
+    const enqueue = useCallback(
+        (list: (File | UploadEntry)[], opts?: EnqueueOptions) => {
         const accepted: UploadItem[] = []
         for (const raw of list) {
             const { file, name } = raw instanceof File ? { file: raw, name: undefined } : raw
@@ -344,8 +365,10 @@ export function UploadProvider({ children }: { children: ReactNode }) {
                 progress: 0,
             })
         }
-        if (accepted.length) setItems((current) => [...current, ...accepted])
-    }, [])
+        if (accepted.length) store.update((current) => [...current, ...accepted])
+        },
+        [store]
+    )
 
     const cancel = useCallback(
         (id: string) => {
@@ -358,31 +381,47 @@ export function UploadProvider({ children }: { children: ReactNode }) {
         [patch]
     )
 
-    const dismiss = useCallback((id: string) => {
-        setItems((current) => current.filter((item) => item.id !== id))
-    }, [])
+    const dismiss = useCallback(
+        (id: string) => store.update((current) => current.filter((item) => item.id !== id)),
+        [store]
+    )
 
-    const clearFinished = useCallback(() => {
-        setItems((current) => current.filter((item) => ACTIVE.includes(item.status)))
-    }, [])
+    const clearFinished = useCallback(
+        () => store.update((current) => current.filter((item) => ACTIVE.includes(item.status))),
+        [store]
+    )
 
     const value = useMemo<UploadContextValue>(
-        () => ({
-            items,
-            activeCount: items.filter((item) => ACTIVE.includes(item.status)).length,
-            enqueue,
-            cancel,
-            dismiss,
-            clearFinished,
-        }),
-        [items, enqueue, cancel, dismiss, clearFinished]
+        () => ({ store, enqueue, cancel, dismiss, clearFinished }),
+        [store, enqueue, cancel, dismiss, clearFinished]
     )
 
     return <UploadContext.Provider value={value}>{children}</UploadContext.Provider>
 }
 
-export function useUploads(): UploadContextValue {
+function useUploadContext(): UploadContextValue {
     const value = useContext(UploadContext)
-    if (!value) throw new Error('useUploads must be used inside <UploadProvider>')
+    if (!value) throw new Error('Upload hooks must be used inside <UploadProvider>')
     return value
+}
+
+/** Stable actions; never re-renders on progress. */
+export function useUploadActions() {
+    const { enqueue, cancel, dismiss, clearFinished } = useUploadContext()
+    return useMemo(() => ({ enqueue, cancel, dismiss, clearFinished }), [enqueue, cancel, dismiss, clearFinished])
+}
+
+/** Full list with progress. Only the list/rows should use this. */
+export function useUploadItems(): UploadItem[] {
+    return useUploadSelector(useUploadContext().store, selectItems)
+}
+
+/** Total items; unaffected by progress ticks. */
+export function useUploadCount(): number {
+    return useUploadSelector(useUploadContext().store, selectCount)
+}
+
+/** Items still queued, uploading or processing; unaffected by progress ticks. */
+export function useUploadActiveCount(): number {
+    return useUploadSelector(useUploadContext().store, selectActiveCount)
 }

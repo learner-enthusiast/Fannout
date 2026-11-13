@@ -33,3 +33,17 @@ Mandatory for `apps/web`, together with [DESIGN.md](../../apps/web/DESIGN.md).
   hover/focus, always on touch); Delete is the last item, destructive style; the
   Delete key on a focused card opens the same dialog.
 - Success toast **"Deleted “{name}”"**; no Undo unless the backend supports restore.
+
+## Popups and performance
+
+Popups open instantly with a skeleton; data prefetches on hover/focus; high-frequency
+state (progress, polling) lives in selector-based stores, never in top-level context;
+lists > 30 items are virtualized; no backdrop-blur; animations ≤ 150 ms.
+
+- Reference: `components/uploads/upload-store.ts` (progress store, ≤ 5 updates/s) and the
+  prefetch-on-intent bell in `components/notifications/notification-bell.tsx`.
+- Context values hold stable actions only. Components subscribe to the slice they render
+  (`useUploadActiveCount`, not "all items").
+- Overlays use opacity + small scale only: 150 ms open, 100 ms close, solid token
+  backgrounds, a single `shadow-float`. Never animate height/width/filter.
+- Polling uses `refetchInterval` without `refetchIntervalInBackground` (pauses in hidden tabs).

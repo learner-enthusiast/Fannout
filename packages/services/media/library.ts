@@ -2,6 +2,7 @@ import { and, asc, count, db, eq, inArray, media, mediaFolderItems, mediaFolders
 import { errors } from "@repo/errors";
 import { abortMultipartUpload, deleteObject } from "@repo/s3";
 import { z } from "zod";
+import { invalidate } from "../cache";
 import { getMediaById } from "./index";
 import {
   DeleteMediaInputSchema,
@@ -22,6 +23,7 @@ export async function renameMedia(userId: string, input: z.input<typeof RenameMe
     .where(and(eq(media.id, mediaId), eq(media.userId, z.uuid().parse(userId))))
     .returning();
   if (!row) return errors.notFound("Media");
+  await invalidate(row.userId, "media", "posts");
   return toMediaView(MediaRowSchema.parse(row));
 }
 
@@ -86,5 +88,9 @@ export async function deleteMediaChecked(
   // Folder links cascade; a folder whose cover was this media falls back to "no cover".
   await db.delete(media).where(and(eq(media.id, row.id), eq(media.userId, row.userId)));
   await deleteObject(row.s3Key, { bucket: row.s3Bucket }).catch(() => undefined);
+  const thumbnailKey = row.metadata?.thumbnailKey;
+  if (thumbnailKey) await deleteObject(thumbnailKey, { bucket: row.s3Bucket }).catch(() => undefined);
+  // Row deleted: folder links cascade, and posts that listed this media change too.
+  await invalidate(row.userId, "media", "posts");
   return { deleted: true, alreadyGone: false };
 }

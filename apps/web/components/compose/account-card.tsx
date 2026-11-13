@@ -1,7 +1,7 @@
 'use client'
 
 import { ChevronDownIcon, CircleAlertIcon, CircleCheckIcon, CopyIcon, ImageIcon, InfoIcon } from 'lucide-react'
-import { useState } from 'react'
+import { isValidElement, memo, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
 import type { RouterOutputs } from '@repo/trpc/client'
 import { providers } from '~/components/connections/providers'
@@ -52,7 +52,7 @@ export function AccountAvatar({ connection }: { connection: Connection }) {
  * One account's post settings, generated from the platform's capabilities.
  * Errors come from the server's dry-run validation (the platform's own Zod schema).
  */
-export function AccountCard({
+function AccountCardBody({
     connection,
     capabilities,
     mediaType,
@@ -207,7 +207,7 @@ export function AccountCard({
                 {mediaType === 'video' && capabilities.supportsThumbnail ? (
                     <div className="flex items-center gap-4">
                         <span className="w-24 shrink-0 overflow-hidden rounded-control border border-border">
-                            <MediaPreview type="image" url={thumbnail?.url ?? null} alt={thumbnail?.name ?? 'No thumbnail'} />
+                            <MediaPreview type="image" url={thumbnail?.url ?? null} thumbUrl={thumbnail?.thumbUrl} alt={thumbnail?.name ?? 'No thumbnail'} />
                         </span>
                         <div className="flex min-w-0 flex-1 flex-col gap-1">
                             <span className="text-label text-foreground">Thumbnail</span>
@@ -271,5 +271,101 @@ export function AccountCard({
                 ) : null}
             </CardContent>
         </Card>
+    )
+}
+
+type AccountCardProps = React.ComponentProps<typeof AccountCardBody>
+
+const same = <T,>(a: T[], b: T[], eq: (x: T, y: T) => boolean = Object.is) => a.length === b.length && a.every((x, i) => eq(x, b[i]!))
+
+function shallowEqualRecord(a: Record<string, unknown>, b: Record<string, unknown>) {
+    const keys = Object.keys(a)
+    return keys.length === Object.keys(b).length && keys.every((key) => Object.is(a[key], b[key]))
+}
+
+/** Slots are re-created by the parent every render: compare type + data props (functions are stable proxies / id-only closures). */
+function slotEqual(a: ReactNode, b: ReactNode) {
+    if (a === b) return true
+    if (!isValidElement(a) || !isValidElement(b) || a.type !== b.type) return false
+    const pa = a.props as Record<string, unknown>
+    const pb = b.props as Record<string, unknown>
+    const data = (p: Record<string, unknown>) => Object.fromEntries(Object.entries(p).filter(([, v]) => typeof v !== 'function'))
+    return shallowEqualRecord(data(pa), data(pb)) && Object.keys(pa).filter((k) => typeof pa[k] === 'function').join() === Object.keys(pb).filter((k) => typeof pb[k] === 'function').join()
+}
+
+function cardPropsEqual(prev: AccountCardProps, next: AccountCardProps) {
+    if (
+        !Object.is(prev.connection, next.connection) ||
+        !Object.is(prev.capabilities, next.capabilities) ||
+        prev.mediaType !== next.mediaType ||
+        !Object.is(prev.video, next.video) ||
+        !Object.is(prev.thumbnail, next.thumbnail) ||
+        prev.thumbnailInherited !== next.thumbnailInherited ||
+        prev.instruction !== next.instruction ||
+        Boolean(prev.onResetThumbnail) !== Boolean(next.onResetThumbnail) ||
+        Boolean(prev.onInstructionChange) !== Boolean(next.onInstructionChange) ||
+        Boolean(prev.aiFor) !== Boolean(next.aiFor)
+    ) {
+        return false
+    }
+    if (!shallowEqualRecord(prev.input, next.input)) return false
+    if (!same(prev.photos, next.photos)) return false
+    if (!(prev.override === next.override || (prev.override && next.override && same(prev.override, next.override)))) return false
+    if (!same(prev.issues, next.issues, (x, y) => x === y || (x.field === y.field && x.message === y.message))) return false
+    if (!same(prev.copySources, next.copySources, (x, y) => x.id === y.id && x.name === y.name)) return false
+    if (!slotEqual(prev.headerChip, next.headerChip) || !slotEqual(prev.scheduleSlot, next.scheduleSlot)) return false
+    if (prev.aiFor && next.aiFor) {
+        for (const field of next.capabilities.fields) {
+            if (!field.ai) continue
+            const a = prev.aiFor(field.name)
+            const b = next.aiFor(field.name)
+            if (a.enabled !== b.enabled || a.busy !== b.busy || a.filled !== b.filled || !Object.is(a.issue, b.issue)) return false
+        }
+    }
+    return true
+}
+
+const MemoAccountCardBody = memo(AccountCardBody, cardPropsEqual)
+
+/**
+ * The parent re-creates every callback and slot on each keystroke. This shell keeps the
+ * latest props in a ref and hands the memoized body stable proxies, so only the card whose
+ * data changed re-renders, and a skipped card's handlers still call the freshest callbacks.
+ */
+export function AccountCard(props: AccountCardProps) {
+    const latest = useRef(props)
+    useLayoutEffect(() => {
+        latest.current = props
+    })
+    const stable = useMemo(
+        () => ({
+            onChange: (field: string, value: unknown) => latest.current.onChange(field, value),
+            onPickThumbnail: () => latest.current.onPickThumbnail(),
+            onOverride: (ids: string[] | undefined) => latest.current.onOverride(ids),
+            onCopyFrom: (sourceId: string) => latest.current.onCopyFrom(sourceId),
+            onResetThumbnail: () => latest.current.onResetThumbnail?.(),
+            onInstructionChange: (value: string) => latest.current.onInstructionChange?.(value),
+        }),
+        []
+    )
+    const source = props.aiFor
+    const aiFor = source
+        ? (field: string) => ({
+              ...source(field),
+              onGenerate: () => latest.current.aiFor?.(field).onGenerate(),
+              onUndo: () => latest.current.aiFor?.(field).onUndo(),
+          })
+        : undefined
+    return (
+        <MemoAccountCardBody
+            {...props}
+            onChange={stable.onChange}
+            onPickThumbnail={stable.onPickThumbnail}
+            onOverride={stable.onOverride}
+            onCopyFrom={stable.onCopyFrom}
+            onResetThumbnail={props.onResetThumbnail ? stable.onResetThumbnail : undefined}
+            onInstructionChange={props.onInstructionChange ? stable.onInstructionChange : undefined}
+            aiFor={aiFor}
+        />
     )
 }

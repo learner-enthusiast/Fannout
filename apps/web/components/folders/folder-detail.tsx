@@ -157,7 +157,7 @@ function ItemCard({
             )}
         >
             <Link href={`/media/${media.id}`} className="outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label={`Open ${media.name}`}>
-                <MediaPreview type={media.type} url={media.previewUrl} alt={media.name} />
+                <MediaPreview type={media.type} url={media.previewUrl} thumbUrl={media.thumbUrl} alt={media.name} />
             </Link>
             <div className="flex flex-col gap-2 p-2">
                 <div className="flex items-center gap-2">

@@ -3,6 +3,7 @@ import { errors } from "@repo/errors";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { afterCursor, cursorTimestamp, toPage } from "../common/pagination";
+import { cached, delKey, globalKey } from "../cache";
 import { env } from "../env";
 import {
   API_KEY_PREFIX,
@@ -14,6 +15,17 @@ import {
   type ApiKeyPrincipal,
   type ApiKeyView,
 } from "./model";
+
+/** Safe subset cached under fn:cache:v1:apikey:{hash}: no key material, only what verification needs. */
+const ApiKeyLookupSchema = z.object({
+  id: z.string(),
+  userId: z.string(),
+  scopes: z.unknown(),
+  tier: z.string(),
+  lastUsedAt: z.date().nullable(),
+  expiresAt: z.date().nullable(),
+  revokedAt: z.date().nullable(),
+});
 
 const BASE62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 
@@ -73,6 +85,7 @@ export async function createApiKey(userId: string, input: z.input<typeof CreateA
       expiresAt: data.expiresInDays ? new Date(Date.now() + data.expiresInDays * 24 * 60 * 60 * 1000) : null,
     })
     .returning({ id: apiKeys.id, prefix: apiKeys.prefix });
+  await delKey(globalKey("apikey", hashApiKey(key)));
   return { id: row!.id, key, prefix: row!.prefix };
 }
 
@@ -96,6 +109,8 @@ export async function revokeApiKey(userId: string, id: string): Promise<ApiKeyVi
     .where(and(eq(apiKeys.id, UuidSchema.parse(id)), eq(apiKeys.userId, UuidSchema.parse(userId)), isNull(apiKeys.revokedAt)))
     .returning();
   if (!row) return errors.notFound("API key");
+  // Committed: a revoked key must stop working immediately, not after the 5-minute TTL.
+  await delKey(globalKey("apikey", row.keyHash));
   return toView(row);
 }
 
@@ -107,14 +122,34 @@ const TOUCH_EVERY_MS = 60_000;
  * format → lookup by key_hash → timingSafeEqual → not revoked/expired.
  * Returns null for anything invalid (the caller penalizes the IP).
  */
-export async function verifyApiKey(rawKey: string, ip?: string | null, now = new Date()): Promise<ApiKeyPrincipal | null> {
+export async function verifyApiKey(rawKey: string, ip?: string | null, now = new Date(), options: { fresh?: boolean } = {}): Promise<ApiKeyPrincipal | null> {
   if (!ApiKeyFormatSchema.safeParse(rawKey).success) return null;
   const hash = hashApiKey(rawKey);
-  const [row] = await db.select().from(apiKeys).where(eq(apiKeys.keyHash, hash)).limit(1);
+  const loadRow = async () => {
+    const [found] = await db.select().from(apiKeys).where(eq(apiKeys.keyHash, hash)).limit(1);
+    if (!found) return null;
+    const a = Buffer.from(found.keyHash, "hex");
+    const b = Buffer.from(hash, "hex");
+    if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
+    return found;
+  };
+  // `fresh` (write endpoints / scope checks on writes) reads Postgres directly.
+  const row = options.fresh
+    ? await loadRow()
+    : await cached({
+        userId: null,
+        group: "apiKey",
+        key: globalKey("apikey", hash),
+        schema: ApiKeyLookupSchema.nullable(),
+        isStale: (value) => value === null,
+        load: async () => {
+          const found = await loadRow();
+          return found
+            ? { id: found.id, userId: found.userId, scopes: found.scopes, tier: found.tier, lastUsedAt: found.lastUsedAt, expiresAt: found.expiresAt, revokedAt: found.revokedAt }
+            : null;
+        },
+      });
   if (!row) return null;
-  const a = Buffer.from(row.keyHash, "hex");
-  const b = Buffer.from(hash, "hex");
-  if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
   if (row.revokedAt || (row.expiresAt && row.expiresAt.getTime() <= now.getTime())) return null;
 
   const last = lastTouched.get(row.id) ?? row.lastUsedAt?.getTime() ?? 0;

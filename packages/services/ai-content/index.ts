@@ -2,10 +2,11 @@ import { AiError, getAiClient, type AiClient } from "@repo/ai";
 import { aiGenerations, aiInstructionPresets, and, db, desc, eq, inArray, media, socialConnections } from "@repo/database";
 import { errors } from "@repo/errors";
 import { z } from "zod";
+import { cached, invalidate } from "../cache";
 import { MediaRowSchema, type MediaRow } from "../media/model";
 import { PLATFORMS, platformForProvider } from "../publishing/platforms";
 import { runGeneration, type GenerationTarget } from "./generate";
-import { aiFieldsFor, CreateInstructionPresetInputSchema, GenerateInputBaseSchema, GenerationIssueSchema, InstructionPresetViewSchema, ListInstructionPresetsInputSchema, NO_SOURCE_MESSAGE, type GenerationView } from "./model";
+import { aiFieldsFor, CreateInstructionPresetInputSchema, GenerateInputBaseSchema, GenerationIssueSchema, InstructionPresetPageSchema, InstructionPresetViewSchema, ListInstructionPresetsInputSchema, NO_SOURCE_MESSAGE, type GenerationView } from "./model";
 import { afterCursor, cursorTimestamp, toPage } from "../common/pagination";
 import { loadSources, SourceError } from "./sources";
 
@@ -213,6 +214,17 @@ export async function runGenerationJob(id: string, ai: AiClient = getAiClient())
 
 export async function listInstructionPresets(userId: string, input: unknown) {
   const { cursor, limit } = ListInstructionPresetsInputSchema.parse(input);
+  return cached({
+    userId,
+    group: "aiPresets",
+    key: "listInstructionPresets",
+    input: { cursor: cursor ?? null, limit },
+    schema: InstructionPresetPageSchema,
+    load: () => loadInstructionPresets(userId, { cursor, limit }),
+  });
+}
+
+async function loadInstructionPresets(userId: string, { cursor, limit }: { cursor?: string | null; limit: number }) {
   const rows = await db.select({ row: aiInstructionPresets, cursorTs: cursorTimestamp(aiInstructionPresets.createdAt) })
     .from(aiInstructionPresets)
     .where(and(eq(aiInstructionPresets.userId, userId), afterCursor(aiInstructionPresets.createdAt, aiInstructionPresets.id, cursor ?? undefined)))
@@ -225,6 +237,7 @@ export async function listInstructionPresets(userId: string, input: unknown) {
 export async function createInstructionPreset(userId: string, input: unknown) {
   const data = CreateInstructionPresetInputSchema.parse(input);
   const [row] = await db.insert(aiInstructionPresets).values({ ...data, userId }).returning();
+  await invalidate(userId, "aiPresets");
   return InstructionPresetViewSchema.parse(row);
 }
 

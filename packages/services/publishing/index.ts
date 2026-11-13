@@ -2,12 +2,15 @@ import { and, asc, db, desc, eq, inArray, media, postMedia, posts, scheduledPost
 import { errors } from "@repo/errors";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import { cached, invalidate } from "../cache";
 import { decodeCursor, encodeCursor } from "../lib/cursor";
 import { isUniqueViolation } from "../lib/pg-errors";
 import { MediaRowSchema } from "../media/model";
 import { SocialConnectionRowSchema } from "../social-connections/model";
 import { toSocialConnectionView } from "../social-connections";
 import {
+  BatchPageSchema,
+  BatchViewSchema,
   ListBatchesInputSchema,
   PostConfigSchema,
   PublishBatchInputSchema,
@@ -191,6 +194,8 @@ export async function publishBatch(
       }
       return out;
     });
+    // Committed: new posts (and their schedules) exist.
+    await invalidate(owner, "posts");
     if (jobs.length && options.scheduling) await enqueueSchedules(options.scheduling, jobs);
     return { batchId, posts: created, replayed: false };
   } catch (error) {
@@ -278,16 +283,53 @@ async function batchViews(userId: string, batchIds: string[]): Promise<BatchView
   });
 }
 
+/**
+ * Group "posts" (600 s). Never stored while any post is mid-publish/delete/edit, and `step` (derived from
+ * posts.config.progress) is dropped from what is stored. A scheduled post whose time has passed is a miss.
+ */
+const IN_FLIGHT_STATUSES = ["queued", "publishing", "deleting"];
+const batchCacheable = (batch: BatchView) => batch.posts.every((post) => !IN_FLIGHT_STATUSES.includes(post.status) && post.editStatus !== "editing");
+const batchForCache = (batch: BatchView): BatchView => ({ ...batch, posts: batch.posts.map((post) => ({ ...post, step: null })) });
+const batchStale = (batch: BatchView) => batch.posts.some((post) => post.schedule?.status === "scheduled" && post.schedule.scheduledAt.getTime() <= Date.now());
+
 export async function getBatch(userId: string, batchId: string): Promise<BatchView> {
-  const [view] = await batchViews(UuidSchema.parse(userId), [UuidSchema.parse(batchId)]);
-  if (!view || view.posts.length === 0) return errors.notFound("Batch");
-  return view;
+  const owner = UuidSchema.parse(userId);
+  const id = UuidSchema.parse(batchId);
+  return cached({
+    userId: owner,
+    group: "posts",
+    key: "getBatch",
+    input: { batchId: id },
+    schema: BatchViewSchema,
+    isStale: batchStale,
+    cacheable: batchCacheable,
+    forCache: batchForCache,
+    load: async () => {
+      const [view] = await batchViews(owner, [id]);
+      if (!view || view.posts.length === 0) return errors.notFound("Batch");
+      return view;
+    },
+  });
 }
 
 /** Batches newest first; cursor = (first post created_at, batch_id). */
 export async function listBatches(userId: string, input: z.input<typeof ListBatchesInputSchema> = {}) {
-  const { cursor, limit, filter } = ListBatchesInputSchema.parse(input);
+  const parsed = ListBatchesInputSchema.parse(input);
   const owner = UuidSchema.parse(userId);
+  return cached({
+    userId: owner,
+    group: "posts",
+    key: "listBatches",
+    input: { cursor: parsed.cursor ?? null, limit: parsed.limit, filter: parsed.filter ?? null },
+    schema: BatchPageSchema,
+    isStale: (page) => page.items.some(batchStale),
+    cacheable: (page) => page.items.every(batchCacheable),
+    forCache: (page) => ({ ...page, items: page.items.map(batchForCache) }),
+    load: () => loadBatches(owner, parsed),
+  });
+}
+
+async function loadBatches(owner: string, { cursor, limit, filter }: z.output<typeof ListBatchesInputSchema>) {
   const started = sql<Date>`min(${posts.createdAt})`;
   const startedText = sql<string>`to_char(min(${posts.createdAt}) at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
   const after = cursor ? decodeCursor(cursor) : null;
@@ -338,5 +380,6 @@ export async function retryPost(userId: string, postId: string) {
       updatedAt: new Date(),
     })
     .where(and(eq(posts.id, row.id), eq(posts.status, "failed")));
+  await invalidate(row.userId, "posts");
   return { postId: row.id, batchId: row.batchId, socialConnectionId: row.socialConnectionId, attempt: attempts };
 }

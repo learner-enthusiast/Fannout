@@ -1,9 +1,10 @@
-import { downloadObjectAsBuffer, getDownloadUrl, headObject } from "@repo/s3";
+import { downloadObjectAsBuffer, getDownloadUrl, headObject, uploadObject } from "@repo/s3";
 import { orientationOf } from "@repo/services/media/model";
 import { probeMedia } from "@repo/services/media/probe";
 import { parseSocialPackage } from "@repo/services/media/social-package";
 import { InvalidSubtitleError, subtitleFormat, summarizeSubtitles } from "@repo/services/media/subtitles";
 import { refreshFolderSuggestion } from "@repo/services/media/suggestions";
+import { generateThumbnail, thumbnailKeyFor } from "@repo/services/media/thumbnail";
 import {
   expireStaleUpload,
   findStaleUploads,
@@ -11,6 +12,7 @@ import {
   markMediaFailed,
   markMediaProcessing,
   markMediaReady,
+  setMediaThumbnail,
   type ReadyUpdate,
 } from "@repo/services/media/uploads";
 import { NonRetriableError } from "inngest";
@@ -162,6 +164,22 @@ export const processMedia = inngest.createFunction(
     await step.run("mark-ready", async () => {
       await markMediaReady(mediaId, update);
     });
+
+    // Best effort and after "ready": a failed thumbnail must never fail or delay an upload.
+    if (media.type === "video" || media.type === "image") {
+      await step.run("thumbnail", async () => {
+        try {
+          const url = await getDownloadUrl(media.s3Key, { bucket: media.s3Bucket, internal: true, expiresIn: 15 * 60 });
+          const jpeg = await generateThumbnail(url, media.type as "video" | "image", update.durationSeconds);
+          const key = thumbnailKeyFor(media.s3Key);
+          await uploadObject(key, jpeg, { bucket: media.s3Bucket, contentType: "image/jpeg", cacheControl: "private, max-age=31536000" });
+          await setMediaThumbnail(mediaId, key);
+          return { thumbnailKey: key };
+        } catch (error) {
+          return { thumbnailKey: null, error: (error as Error).message.slice(0, 200) };
+        }
+      });
+    }
 
     await step.sendEvent(
       "notify-succeeded",

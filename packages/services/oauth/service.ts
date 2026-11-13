@@ -231,7 +231,7 @@ export function createOAuthService(deps: OAuthServiceDeps) {
     url.searchParams.set("client_id", adapter.getClient().client_id);
     url.searchParams.set("redirect_uri", adapter.redirectUri);
     url.searchParams.set("response_type", "code");
-    url.searchParams.set("scope", adapter.scopes.join(adapter.scopeSeparator ?? " "));
+    if (!adapter.omitScopeParam) url.searchParams.set("scope", adapter.scopes.join(adapter.scopeSeparator ?? " "));
     url.searchParams.set("state", state);
     if (adapter.usePkce) {
       url.searchParams.set("code_challenge", await oauth.calculatePKCECodeChallenge(codeVerifier));
@@ -372,6 +372,11 @@ export function createOAuthService(deps: OAuthServiceDeps) {
         return fail("identity_failed", error);
       }
       if (accounts.length === 0) return fail("no_account");
+
+      if (adapter.connectsAllAccounts) {
+        const connectionIds = await persistAccounts(transaction.userId, accounts, tokens);
+        return { status: "connected", provider, returnTo, connectionIds };
+      }
 
       if (accounts.length > 1 && adapter.allowsAccountSelection) {
         const payload = PendingSelectionPayloadSchema.parse({ tokens, accounts });

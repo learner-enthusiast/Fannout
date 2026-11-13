@@ -143,6 +143,15 @@
     --radius-surface: 12px;
     --duration-fast: 150ms;
     --duration-base: 200ms;
+    /*
+     * Layer scale. Dialog-type overlays sit below menus/popovers/tooltips so a Select,
+     * dropdown or popover opened INSIDE a dialog is never hidden behind it.
+     * sticky header (30) < overlay (50) < dropdown (60) < popover (70) < tooltip (80) < toast (sonner)
+     */
+    --z-overlay: 50;
+    --z-dropdown: 60;
+    --z-popover: 70;
+    --z-tooltip: 80;
     /* Legacy shadcn/Clerk hook — points at the surface radius */
     --radius: var(--radius-surface);
 }
@@ -258,6 +267,18 @@
     transition-duration: var(--duration-fast);
     --tw-duration: var(--duration-fast);
 }
+@utility z-overlay {
+    z-index: var(--z-overlay);
+}
+@utility z-dropdown {
+    z-index: var(--z-dropdown);
+}
+@utility z-popover {
+    z-index: var(--z-popover);
+}
+@utility z-tooltip {
+    z-index: var(--z-tooltip);
+}
 @utility duration-base {
     transition-duration: var(--duration-base);
     --tw-duration: var(--duration-base);
@@ -279,6 +300,8 @@
     }
     html {
         @apply font-sans;
+        /* Scroll-lock from dialogs/menus must not shift the layout. */
+        scrollbar-gutter: stable;
         -webkit-font-smoothing: antialiased;
         -webkit-tap-highlight-color: transparent;
     }

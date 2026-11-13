@@ -18,6 +18,7 @@ import {
   sql,
 } from "@repo/database";
 import { errors } from "@repo/errors";
+import { cached } from "../cache";
 import { decodeKeyCursor, toKeyPage } from "../common/pagination";
 import { MediaRowSchema } from "../media/model";
 import { presignedUrl } from "../media/views";
@@ -25,8 +26,11 @@ import { platformForProvider, type Platform } from "../publishing/platforms";
 import { ANALYTICS_CAPABILITIES, missingScopes } from "./capabilities";
 import {
   BestTimesInputSchema,
+  BestTimesSchema,
   MetricsSchema,
   OverviewInputSchema,
+  OverviewSchema,
+  PostDetailSchema,
   TopPostsInputSchema,
   engagementOf,
   type Availability,
@@ -131,9 +135,10 @@ async function availabilityFor(conns: Conn[]): Promise<(Availability & { state: 
     const state = states.find((s) => s.socialConnectionId === c.id) ?? null;
     const missing = missingScopes(c.platform, c.scopes);
     const last = [state?.lastAccountSyncAt, state?.lastPostSyncAt].filter(Boolean).sort((a, b) => b!.getTime() - a!.getTime())[0] ?? null;
+    const permissionBlocked = missing.length > 0 || !c.hasToken;
     const status: Availability["status"] = !cap.supported
       ? "unsupported"
-      : missing.length || !c.hasToken || state?.status === "needs_reconnect"
+      : permissionBlocked
         ? "needs_reconnect"
         : state?.status === "error" && !hasData.has(c.id)
           ? "error"
@@ -193,6 +198,12 @@ const PLATFORM_TILES: Record<Platform, { key: MetricKey; source: "account" | "po
     { key: "impressions", source: "account", agg: "sum" },
     { key: "video_views", source: "account", agg: "sum" },
   ],
+  instagram: [
+    { key: "reach", source: "account", agg: "sum" },
+    { key: "engagements", source: "account", agg: "sum" },
+    { key: "saves", source: "posts", agg: "sum" },
+    { key: "avg_view_duration_seconds", source: "posts", agg: "avg" },
+  ],
   threads: [
     { key: "views", source: "account", agg: "sum" },
     { key: "comments", source: "account", agg: "sum" },
@@ -245,7 +256,16 @@ async function publishCounts(userId: string, connectionIds: string[], from: stri
 
 const successRate = (c: { published: number; failed: number }) => (c.published + c.failed > 0 ? (c.published / (c.published + c.failed)) * 100 : null);
 
+/** Presets like "last 7 days" move with the calendar, so the UTC day is part of the cache key. */
+const utcDay = () => new Date().toISOString().slice(0, 10);
+
+/** Group "analytics" (also bumped when a sync finishes or a connection changes). */
 export async function analyticsOverview(userId: string, rawInput: OverviewInput): Promise<Overview> {
+  const input = OverviewInputSchema.parse(rawInput);
+  return cached({ userId, group: "analytics", key: "analyticsOverview", input: { ...input, day: utcDay() }, schema: OverviewSchema, load: () => loadOverview(userId, input) });
+}
+
+async function loadOverview(userId: string, rawInput: OverviewInput): Promise<Overview> {
   const input = OverviewInputSchema.parse(rawInput);
   const range = resolveRange(input, input.timeZone);
   const conns = await userConnections(userId, input.connectionId);
@@ -482,6 +502,10 @@ async function thumbnailsFor(postIds: string[]) {
 // ---------------------------------------------------------------------------
 
 export async function analyticsPostDetail(userId: string, postId: string) {
+  return cached({ userId, group: "analytics", key: "analyticsPostDetail", input: { postId }, schema: PostDetailSchema, load: () => loadPostAnalytics(userId, postId) });
+}
+
+async function loadPostAnalytics(userId: string, postId: string) {
   const [post] = await db
     .select({ id: posts.id, provider: socialConnections.provider })
     .from(posts)
@@ -501,6 +525,11 @@ export async function analyticsPostDetail(userId: string, postId: string) {
 }
 
 export async function analyticsBestTimes(userId: string, rawInput: BestTimesInput) {
+  const input = BestTimesInputSchema.parse(rawInput);
+  return cached({ userId, group: "analytics", key: "analyticsBestTimes", input: { ...input, day: utcDay() }, schema: BestTimesSchema, load: () => loadBestTimes(userId, input) });
+}
+
+async function loadBestTimes(userId: string, rawInput: BestTimesInput) {
   const input = BestTimesInputSchema.parse(rawInput);
   const range = resolveRange(input, input.timeZone);
   const conns = await userConnections(userId, input.connectionId);

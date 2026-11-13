@@ -11,6 +11,7 @@ import {
   partCount,
 } from "@repo/s3";
 import { z } from "zod";
+import { invalidate } from "../cache";
 import { createMedia, getMediaById } from "./index";
 import {
   CompleteUploadInputSchema,
@@ -110,6 +111,7 @@ export async function completeMediaUpload(
     .where(and(eq(media.id, row.id), eq(media.status, "uploading")))
     .returning();
   if (!updated) return errors.conflict("This upload is not in progress");
+  await invalidate(updated.userId, "media");
   return MediaRowSchema.parse(updated);
 }
 
@@ -142,6 +144,7 @@ async function failUpload(row: MediaRow, error: string): Promise<{ row: MediaRow
     })
     .where(and(eq(media.id, row.id), inArray(media.status, ["uploading", "uploaded"])))
     .returning();
+  if (updated) await invalidate(updated.userId, "media");
   return updated
     ? { row: MediaRowSchema.parse(updated), changed: true }
     : { row, changed: false };
@@ -162,6 +165,7 @@ export async function markMediaProcessing(id: string): Promise<MediaRow | null> 
     .set({ status: "processing", updatedAt: new Date() })
     .where(and(eq(media.id, UuidSchema.parse(id)), inArray(media.status, ["uploaded", "processing"])))
     .returning();
+  if (row) await invalidate(row.userId, "media");
   return row ? MediaRowSchema.parse(row) : null;
 }
 
@@ -198,7 +202,19 @@ export async function markMediaReady(id: string, update: ReadyUpdate): Promise<M
     .where(eq(media.id, current.id))
     .returning();
   if (!row) return errors.notFound("Media");
+  await invalidate(row.userId, "media");
   return MediaRowSchema.parse(row);
+}
+
+/** Records the thumbnail object (merged into metadata; never changes status). */
+export async function setMediaThumbnail(id: string, thumbnailKey: string): Promise<void> {
+  const current = await getMediaForProcessing(id);
+  if (!current) return;
+  await db
+    .update(media)
+    .set({ metadata: { ...current.metadata, thumbnailKey }, updatedAt: new Date() })
+    .where(eq(media.id, current.id));
+  await invalidate(current.userId, "media");
 }
 
 export async function markMediaFailed(id: string, error: string): Promise<MediaRow | null> {
@@ -213,6 +229,7 @@ export async function markMediaFailed(id: string, error: string): Promise<MediaR
     })
     .where(eq(media.id, current.id))
     .returning();
+  if (row) await invalidate(row.userId, "media");
   return row ? MediaRowSchema.parse(row) : null;
 }
 

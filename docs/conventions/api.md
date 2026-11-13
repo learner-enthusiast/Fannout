@@ -73,3 +73,29 @@ Mandatory for every tRPC procedure / REST route. Enforced by
 - A connection missing a scope in `requiredScopes` gets status `needs_reconnect` with no
   API call. Auth/permission errors during sync set the analytics status only; they never
   clear the connection's publishing tokens.
+
+## Caching
+
+Service-level reads go through a Redis cache-aside layer (`packages/services/cache`). The TTL is only a
+safety net: correctness comes from invalidating on every write.
+
+- **Reads.** Every new get/list service function picks a group from `CACHE_TTL_SECONDS`
+  (`user`, `apiKey`, `connections`, `media`, `posts`, `notifications`, `analytics`, `platform:{connId}`,
+  `mentions`, `aiPresets`) and goes through `cached({ userId, group, key, input, schema, load })`.
+  `input` must hold everything that changes the result (cursor, limit, search text, filters, tab,
+  connection id, folder id). `schema` is the **output** model; a cached value that no longer validates is
+  a miss. Use `isStale` / `cacheable` / `forCache` when a value depends on time or holds in-flight state
+  (e.g. a scheduled post whose `scheduled_at` has passed is a miss).
+- **Writes.** Every new write function calls `invalidate(userId, ...groups)` **after the commit, in the
+  service layer** (so tRPC, Inngest, BullMQ, webhooks and Meta callbacks are all covered), and never inside
+  an open transaction. Inside Inngest, invalidate in the same step as the write. Global keys (`user`,
+  `apiKey`) use `delKey(globalKey(...))`.
+- **Never in the cache:** access/refresh tokens (encrypted or not), presigned upload/download URLs (cache
+  the rows and sign after the read), upload progress, `posts.config.progress`, rate-limiter state. No key
+  without a TTL, and never `KEYS` / `SCAN`.
+- **Workers read the DB directly.** publish-post, delete-post, edit-post, process-media, the schedule
+  worker and sweeper, token refresh, connection health checks and API-key scope checks on write endpoints
+  never read through the cache ("check the DB before posting" must stay true).
+- **Fail open.** A Redis error or timeout (200 ms) means "read Postgres"; a cache failure never fails a
+  request. `CACHE_ENABLED=false` bypasses the layer.
+- After adding new files, run `graphify update .` (the git hook also does it on commit).

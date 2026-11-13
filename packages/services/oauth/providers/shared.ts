@@ -38,11 +38,12 @@ export async function providerGetJson<T>(
   url: URL,
   http: HttpOptions,
   schema: z.ZodType<T>,
+  headers: Record<string, string> = {},
 ): Promise<T> {
   const doFetch = http[oauth.customFetch] ?? ((input, init) => fetch(input, init as RequestInit));
   const response = await doFetch(url.href, {
     method: "GET",
-    headers: { accept: "application/json" },
+    headers: { accept: "application/json", ...headers },
     redirect: "manual",
     body: undefined,
     signal: http.signal?.(url.href),

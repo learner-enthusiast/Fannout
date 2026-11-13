@@ -27,7 +27,7 @@ export const ComposeFieldSchema = z.object({
 export type ComposeField = z.infer<typeof ComposeFieldSchema>;
 
 export const PlatformCapabilitiesSchema = z.object({
-  platform: z.enum(["youtube", "x", "linkedin", "threads", "facebook"]).describe("Platform key."),
+  platform: z.enum(["youtube", "x", "linkedin", "threads", "facebook", "instagram"]).describe("Platform key."),
   mentions: z.object({
     supported: z.boolean().describe("Whether the composer can insert mention contacts."),
     kind: z.enum(["handle", "urn", "page", "text_only"]).describe("How the platform represents mentions."),
@@ -51,6 +51,8 @@ export const PlatformCapabilitiesSchema = z.object({
     maxVideoSeconds: z.number().optional().describe("Longest video in seconds."),
     maxImageBytes: z.number().optional().describe("Largest image in bytes."),
     shortMaxSeconds: z.number().optional().describe("Vertical videos up to this length publish as Shorts."),
+    videoMimeTypes: z.array(z.string()).optional().describe("Accepted video MIME types (e.g. Instagram: video/mp4, video/quicktime)."),
+    imageMimeTypes: z.array(z.string()).optional().describe("Accepted image MIME types for photos and cover images (Instagram: image/jpeg only)."),
     requiresPublicUrl: z.boolean().optional().describe("The platform fetches media from a public URL."),
     billed: z.boolean().optional().describe("The platform bills API usage for posting."),
   }).describe("Media limits checked by POST /posts/validate."),

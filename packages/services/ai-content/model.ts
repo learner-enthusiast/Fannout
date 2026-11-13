@@ -6,7 +6,7 @@ import { PaginationInputSchema, paginatedOutput } from "../common/pagination";
 /**
  * AI output fields are the compose fields marked `ai: true` in each
  * platform's model.ts; their validators ARE those field schemas, so limits
- * live in one place. (Instagram has no provider yet, so it has no fields.)
+ * live in one place (e.g. the Instagram caption schema caps hashtags and mentions).
  */
 
 export type AiField = {
@@ -126,10 +126,10 @@ export const GenerationViewSchema = z.object({
 });
 
 export const InstructionPresetViewSchema = z.object({
-  id: z.uuid(),
-  name: z.string(),
-  text: z.string(),
-  createdAt: z.date(),
+  id: z.uuid().describe("Preset ID."),
+  name: z.string().describe("Preset name."),
+  text: z.string().describe("Instruction text."),
+  createdAt: z.date().describe("When the preset was created."),
 });
 export const InstructionPresetPageSchema = paginatedOutput(InstructionPresetViewSchema);
 export const ListInstructionPresetsInputSchema = PaginationInputSchema;

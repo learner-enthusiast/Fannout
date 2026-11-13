@@ -9,7 +9,7 @@ import { FormField } from '~/components/ui/form-field'
 import { Input } from '~/components/ui/input'
 import { Dropzone } from '~/components/uploads/dropzone'
 import { UploadList } from '~/components/uploads/upload-list'
-import { useUploads } from '~/components/uploads/upload-provider'
+import { useUploadActions, useUploadCount } from '~/components/uploads/upload-provider'
 import { formatBytes, mediaKind, nameFromFilename, UPLOAD_ACCEPT } from '~/lib/media-format'
 import { TYPE_LABEL } from '~/lib/media-roles'
 
@@ -28,7 +28,8 @@ export function MediaUpload({
     /** The page lists uploads below; the dialog leaves that to the header indicator. */
     showQueue?: boolean
 } = {}) {
-    const { enqueue, items } = useUploads()
+    const { enqueue } = useUploadActions()
+    const uploadCount = useUploadCount()
     const [staged, setStaged] = useState<Staged[]>([])
 
     const stage = (files: File[]) =>
@@ -108,7 +109,7 @@ export function MediaUpload({
                 </section>
             ) : null}
 
-            {showQueue && items.length > 0 ? (
+            {showQueue && uploadCount > 0 ? (
                 <section className="flex flex-col gap-4" aria-labelledby="uploads-heading">
                     <h2 id="uploads-heading" className="text-section-title text-foreground">
                         Uploads

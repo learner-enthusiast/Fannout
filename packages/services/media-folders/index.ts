@@ -13,11 +13,12 @@ import {
 } from "@repo/database";
 import { errors } from "@repo/errors";
 import { z } from "zod";
+import { cached, invalidate } from "../cache";
 import { afterCursor, cursorTimestamp, toPage } from "../lib/cursor";
 import { decodeKeyCursor, toKeyPage } from "../common/pagination";
 import { isUniqueViolation } from "../lib/pg-errors";
 import { MediaRowSchema, type MediaRow } from "../media/model";
-import { nameMatches, presignedUrl } from "../media/views";
+import { cacheableMediaRow, nameMatches, presignedThumbUrl, presignedUrl } from "../media/views";
 import {
   AddItemsInputSchema,
   CreateFolderInputSchema,
@@ -146,6 +147,7 @@ export async function createFolder(userId: string, input: z.input<typeof CreateF
       await insertItems(tx, userId, folder!.id, data.items ?? []);
       return folder!.id;
     });
+    await invalidate(userId, "media");
     return getFolder(userId, folderId);
   } catch (error) {
     if (isUniqueViolation(error)) return nameTaken();
@@ -175,6 +177,7 @@ export async function updateFolder(userId: string, input: z.input<typeof UpdateF
     if (isUniqueViolation(error)) return nameTaken();
     throw error;
   }
+  await invalidate(userId, "media");
   return getFolder(userId, folderId);
 }
 
@@ -184,12 +187,13 @@ export async function deleteFolder(userId: string, folderId: string): Promise<vo
   await db
     .delete(mediaFolders)
     .where(and(eq(mediaFolders.id, UuidSchema.parse(folderId)), eq(mediaFolders.userId, UuidSchema.parse(userId))));
+  await invalidate(userId, "media");
 }
 
-/** Cover URL per folder: the explicit cover, else the primary thumbnail. */
-async function coverUrls(folders: { id: string; coverMediaId: string | null }[]) {
+/** Cover media per folder: the explicit cover, else the primary thumbnail. */
+async function coverMedia(folders: { id: string; coverMediaId: string | null }[]) {
   const ids = folders.map((folder) => folder.id);
-  const result = new Map<string, string>();
+  const result = new Map<string, MediaRow>();
   if (ids.length === 0) return result;
 
   const thumbs = await db
@@ -212,10 +216,20 @@ async function coverUrls(folders: { id: string; coverMediaId: string | null }[])
 
   const rows = await db.select().from(media).where(inArray(media.id, [...new Set(wanted.values())]));
   const byId = new Map(rows.map((row) => [row.id, MediaRowSchema.parse(row)]));
+  for (const [folderId, mediaId] of wanted) {
+    const row = byId.get(mediaId);
+    if (row) result.set(folderId, row);
+  }
+  return result;
+}
+
+/** Cover URL per folder (presigned: never cached). */
+async function coverUrls(folders: { id: string; coverMediaId: string | null }[]) {
+  const covers = await coverMedia(folders);
+  const result = new Map<string, string>();
   await Promise.all(
-    [...wanted].map(async ([folderId, mediaId]) => {
-      const row = byId.get(mediaId);
-      const url = row ? await presignedUrl(row) : null;
+    [...covers].map(async ([folderId, row]) => {
+      const url = await presignedUrl(row);
       if (url) result.set(folderId, url);
     }),
   );
@@ -247,8 +261,52 @@ export async function toFolderSummaries(
   }));
 }
 
+/** A folder summary before its cover is signed: this, not FolderSummary, is what Redis holds. */
+const FolderPartSchema = z.object({
+  id: z.uuid(),
+  name: z.string(),
+  description: z.string().nullable(),
+  itemCount: z.number().int().nonnegative(),
+  createdAt: z.date(),
+  updatedAt: z.date(),
+  coverMedia: MediaRowSchema.nullable(),
+});
+const FolderPartsPageSchema = z.object({ items: z.array(FolderPartSchema), nextCursor: z.string().nullable() });
+
+async function toFolderParts(rows: (typeof mediaFolders.$inferSelect)[]) {
+  const [covers, counts] = await Promise.all([coverMedia(rows), itemCounts(rows.map((row) => row.id))]);
+  return rows.map((row) => {
+    const cover = covers.get(row.id);
+    return {
+      id: row.id,
+      name: row.name,
+      description: row.description,
+      itemCount: counts.get(row.id) ?? 0,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+      coverMedia: cover ? cacheableMediaRow(cover) : null,
+    };
+  });
+}
+
+/** Group "media". Covers are signed after the cache read (presigned URLs are never cached). */
 export async function listFolders(userId: string, input: ListFoldersInput = {}) {
-  const { q, cursor, limit } = ListFoldersInputSchema.parse(input);
+  const parsed = ListFoldersInputSchema.parse(input);
+  const page = await cached({
+    userId,
+    group: "media",
+    key: "listFolders",
+    input: { q: parsed.q ?? null, cursor: parsed.cursor ?? null, limit: parsed.limit },
+    schema: FolderPartsPageSchema,
+    load: () => loadFolderParts(userId, parsed),
+  });
+  const items: FolderSummary[] = await Promise.all(
+    page.items.map(async ({ coverMedia: cover, ...part }) => ({ ...part, coverUrl: cover ? await presignedUrl(cover) : null })),
+  );
+  return { items, nextCursor: page.nextCursor };
+}
+
+async function loadFolderParts(userId: string, { q, cursor, limit }: z.output<typeof ListFoldersInputSchema>) {
   const rows = await db
     .select({ row: mediaFolders, cursorTs: cursorTimestamp(mediaFolders.createdAt) })
     .from(mediaFolders)
@@ -263,7 +321,7 @@ export async function listFolders(userId: string, input: ListFoldersInput = {}) 
     .limit(limit + 1);
   const page = toPage(rows.map(({ row, cursorTs }) => ({ id: row.id, cursorTs, row })), limit);
   return {
-    items: await toFolderSummaries(page.items.map((item) => item.row)),
+    items: await toFolderParts(page.items.map((item) => item.row)),
     nextCursor: page.nextCursor,
   };
 }
@@ -281,6 +339,7 @@ async function toItemView(link: Link, row: MediaRow): Promise<FolderItemView> {
       width: row.width,
       height: row.height,
       previewUrl: await presignedUrl(row),
+      thumbUrl: await presignedThumbUrl(row),
     },
   };
 }
@@ -304,8 +363,32 @@ export async function getFolder(userId: string, folderId: string): Promise<Folde
 const roleRank = sql<number>`array_position(${sql.raw(`ARRAY[${FOLDER_ROLES.map((r) => `'${r}'`).join(",")}]::text[]`)}, ${mediaFolderItems.role})`;
 
 /** Items of a folder, 10 at a time: role → position → id (sortKey = "rank:position"). */
+const FolderItemRowsPageSchema = z.object({
+  items: z.array(
+    z.object({
+      link: z.object({ mediaId: z.uuid(), role: z.string(), label: z.string().nullable(), position: z.number().int(), isPrimary: z.boolean() }),
+      row: MediaRowSchema,
+    }),
+  ),
+  nextCursor: z.string().nullable(),
+});
+
+/** Group "media". Rows are cached; presigned preview/thumb URLs are signed per read. */
 export async function listFolderItems(userId: string, input: FolderItemsInput) {
-  const { folderId, role, cursor, limit } = FolderItemsInputSchema.parse(input);
+  const parsed = FolderItemsInputSchema.parse(input);
+  const page = await cached({
+    userId,
+    group: "media",
+    key: "listFolderItems",
+    input: { folderId: parsed.folderId, role: parsed.role ?? null, cursor: parsed.cursor ?? null, limit: parsed.limit },
+    schema: FolderItemRowsPageSchema,
+    load: () => loadFolderItemRows(userId, parsed),
+  });
+  const items = await Promise.all(page.items.map(({ link, row }) => toItemView(link as Link, row)));
+  return { items, nextCursor: page.nextCursor };
+}
+
+async function loadFolderItemRows(userId: string, { folderId, role, cursor, limit }: z.output<typeof FolderItemsInputSchema>) {
   const folder = await ownedFolder(db, userId, folderId);
   const after = cursor ? decodeKeyCursor(cursor) : null;
   const [afterRank, afterPosition] = after ? after.sortKey.split(":").map(Number) : [0, 0];
@@ -328,7 +411,10 @@ export async function listFolderItems(userId: string, input: FolderItemsInput) {
 
   const page = toKeyPage(rows, limit, (r) => ({ sortKey: `${r.rank}:${r.link.position}`, id: r.link.mediaId }));
   return {
-    items: await Promise.all(page.items.map(({ link, row }) => toItemView(link as Link, MediaRowSchema.parse(row)))),
+    items: page.items.map(({ link, row }) => ({
+      link: { mediaId: link.mediaId, role: link.role, label: link.label, position: link.position, isPrimary: link.isPrimary },
+      row: cacheableMediaRow(MediaRowSchema.parse(row)),
+    })),
     nextCursor: page.nextCursor,
   };
 }
@@ -344,6 +430,7 @@ export async function addFolderItems(userId: string, input: z.input<typeof AddIt
     await insertItems(tx, userId, folderId, items);
     await touch(tx, folderId);
   });
+  await invalidate(userId, "media");
   return getFolder(userId, folderId);
 }
 
@@ -362,6 +449,7 @@ export async function removeFolderItem(userId: string, input: z.input<typeof Rem
     }
     await touch(tx, folderId);
   });
+  await invalidate(userId, "media");
   return getFolder(userId, folderId);
 }
 
@@ -410,6 +498,7 @@ export async function updateFolderItem(userId: string, input: z.input<typeof Upd
     }
     await touch(tx, data.folderId);
   });
+  await invalidate(userId, "media");
   return getFolder(userId, data.folderId);
 }
 
@@ -427,6 +516,7 @@ export async function reorderFolderRole(userId: string, input: z.input<typeof Re
     await renumber(tx, folderId, role, mediaIds);
     await touch(tx, folderId);
   });
+  await invalidate(userId, "media");
   return getFolder(userId, folderId);
 }
 

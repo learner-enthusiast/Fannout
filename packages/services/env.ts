@@ -43,6 +43,12 @@ const envSchema = z.object({
     .default("false")
     .transform((v) => v === "true"),
 
+  /** Redis cache layer (services/cache). false = every read goes straight to Postgres. */
+  CACHE_ENABLED: z
+    .enum(["true", "false"])
+    .default("true")
+    .transform((v) => v === "true"),
+
   X_CLIENT_ID: optional,
   X_CLIENT_SECRET: optional,
   X_REDIRECT_URI: z.url().default("http://localhost:8000/api/oauth/x/callback"),
@@ -81,6 +87,17 @@ const envSchema = z.object({
   /** threads_manage_insights: analytics dashboard. */
   THREADS_SCOPES: z.string().default("threads_basic,threads_content_publish,threads_delete,threads_manage_insights"),
 
+  /**
+   * Instagram API with Unified Login: same Meta app as Facebook (FACEBOOK_CLIENT_ID/SECRET), plus the
+   * Facebook Login for Business configuration id. Permissions come from that configuration (no scope param).
+   */
+  INSTAGRAM_CONFIG_ID: optional,
+  INSTAGRAM_REDIRECT_URI: z.url().default("http://localhost:8000/api/oauth/instagram/callback"),
+  INSTAGRAM_GRAPH_VERSION: z
+    .string()
+    .regex(/^v\d+\.\d+$/)
+    .default("v27.0"),
+
   /** Scheduled posts: assumed upload speed to push platforms (Mbit/s) for the lead time. */
   SCHEDULE_UPLOAD_MBPS: z.coerce.number().positive().default(20),
   /** Lead time bounds (seconds): uploads start this long before scheduled_at. */
@@ -113,6 +130,9 @@ function collectWarnings(env: z.infer<typeof envSchema>): string[] {
     } else if (!secret && !optionalSecret) {
       warnings.push(`${provider.name} is disabled: ${provider.secret} is not set.`);
     }
+  }
+  if (env.FACEBOOK_CLIENT_ID && env.FACEBOOK_CLIENT_SECRET && !env.INSTAGRAM_CONFIG_ID) {
+    warnings.push("Instagram is disabled: INSTAGRAM_CONFIG_ID is not set.");
   }
   if (env.THREADS_CLIENT_ID && !env.THREADS_REDIRECT_URI.startsWith("https://")) {
     warnings.push(

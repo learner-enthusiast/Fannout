@@ -54,7 +54,11 @@ export type ComposeMediaRules = {
   maxImageBytes?: number;
   /** YouTube: vertical videos up to this length publish as Shorts. */
   shortMaxSeconds?: number;
-  /** Platform downloads media from a public URL (Threads). */
+  /** Accepted video MIME types (Instagram: mp4/mov). Omitted = no extra restriction. */
+  videoMimeTypes?: string[];
+  /** Accepted image MIME types, for photos and cover images (Instagram: JPEG only). */
+  imageMimeTypes?: string[];
+  /** Platform downloads media from a public URL (Threads, Instagram). */
   requiresPublicUrl?: boolean;
   /** Each post costs money (X API pay-per-use). */
   billed?: boolean;

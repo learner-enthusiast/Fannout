@@ -39,6 +39,8 @@ export const MediaMetadataSchema = z.looseObject({
   jsonSchema: JsonSchemaKindSchema.nullable().optional(),
   subtitle: SubtitleSummarySchema.nullable().optional(),
   folderSuggestion: FolderSuggestionSchema.optional(),
+  /** Object key of the small JPEG thumbnail (images and videos). */
+  thumbnailKey: z.string().optional(),
   /** social_package JSON: the parts needed to recompute the suggestion later. */
   socialPackage: z
     .object({ video: z.string(), files: z.record(z.string(), z.union([z.string(), z.array(z.string())])) })
@@ -230,6 +232,7 @@ export const MediaViewSchema = z.object({
   error: z.string().nullable().describe("Why processing failed, when status is failed."),
   /** Presigned GET URL; null until the upload has finished. */
   url: z.string().nullable().describe("Short-lived presigned download URL; null until the upload has finished."),
+  thumbUrl: z.string().nullable().describe("Short-lived presigned URL of a small (≤ 320 px) JPEG thumbnail; null for non-visual media or when none was generated yet. Prefer it over url for lists and grids."),
   createdAt: z.date().describe("When the media was created."),
   updatedAt: z.date().describe("When the media last changed."),
 });

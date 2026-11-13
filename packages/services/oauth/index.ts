@@ -2,7 +2,7 @@ import { and, db, eq, socialConnections } from "@repo/database";
 import { errors } from "@repo/errors";
 import { env } from "../env";
 import { dbOAuthTransactionStore } from "../oauth-transactions";
-import { upsertSocialConnection } from "../social-connections";
+import { invalidateConnection, upsertSocialConnection } from "../social-connections";
 import { SocialConnectionRowSchema } from "../social-connections/model";
 import type { OAuthProviderSlug } from "./model";
 import { createProviderRegistry } from "./providers";
@@ -31,7 +31,8 @@ export const dbConnectionStore: ConnectionStore = {
   },
 
   async withLock(userId, connectionId, fn) {
-    return db.transaction(async (tx) => {
+    let changed = false;
+    const result = await db.transaction(async (tx) => {
       const [row] = await tx
         .select()
         .from(socialConnections)
@@ -44,8 +45,12 @@ export const dbConnectionStore: ConnectionStore = {
           .update(socialConnections)
           .set({ ...patch, updatedAt: new Date() })
           .where(eq(socialConnections.id, connectionId));
+        changed = true;
       });
     });
+    // After the transaction commits (never inside it): a token refresh changes expiry/status.
+    if (changed) await invalidateConnection(userId, connectionId);
+    return result;
   },
 };
 
@@ -74,6 +79,15 @@ export const providers = createProviderRegistry({
     redirectUri: env.FACEBOOK_REDIRECT_URI,
     scopes: env.FACEBOOK_SCOPES,
     apiVersion: env.FACEBOOK_GRAPH_VERSION,
+  },
+  instagram: {
+    // Same Meta app as Facebook; permissions come from the Login for Business configuration.
+    clientId: env.FACEBOOK_CLIENT_ID,
+    clientSecret: env.FACEBOOK_CLIENT_SECRET,
+    redirectUri: env.INSTAGRAM_REDIRECT_URI,
+    scopes: "",
+    apiVersion: env.INSTAGRAM_GRAPH_VERSION,
+    configId: env.INSTAGRAM_CONFIG_ID,
   },
   threads: {
     clientId: env.THREADS_CLIENT_ID,
@@ -106,6 +120,7 @@ export function getConfiguredProviders(): Record<OAuthProviderSlug, boolean> {
     youtube: providers.youtube.isConfigured(),
     facebook: providers.facebook.isConfigured(),
     threads: providers.threads.isConfigured(),
+    instagram: providers.instagram.isConfigured(),
   };
 }
 

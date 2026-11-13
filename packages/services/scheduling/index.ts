@@ -2,6 +2,7 @@ import { and, asc, db, eq, inArray, isNull, media, postMedia, posts, scheduledPo
 import { errors } from "@repo/errors";
 import { logger } from "@repo/logger";
 import { z } from "zod";
+import { invalidate } from "../cache";
 import type { NotificationType } from "../notifications/model";
 import { PostConfigSchema } from "../publishing/model";
 import { scheduleTimeIssue } from "./effective";
@@ -20,6 +21,12 @@ export * from "./effective";
 export * from "./lead-time";
 
 const UuidSchema = z.uuid();
+
+/** For writers that only know the post id (workers, sweeper): find the owner, then bump their posts group. */
+async function invalidatePostOwner(postId: string) {
+  const [row] = await db.select({ userId: posts.userId }).from(posts).where(eq(posts.id, postId)).limit(1);
+  if (row) await invalidate(row.userId, "posts");
+}
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 /** Deterministic BullMQ job id for one schedule version (BullMQ allows exactly 2 colons). */
@@ -140,6 +147,7 @@ export async function handoff(postId: string, scheduleVersion: number, effects: 
     )
     .returning();
 
+  if (claimed) await invalidatePostOwner(id);
   let row = claimed;
   if (!row) {
     const [current] = await db.select().from(scheduledPosts).where(eq(scheduledPosts.postId, id)).limit(1);
@@ -219,6 +227,7 @@ export async function reschedule(userId: string, input: RescheduleInput, effects
     return { row: updated!, previous: schedule };
   });
 
+  await invalidate(userId, "posts");
   if (previous.queueJobId) await effects.removeHandoffJob(previous.queueJobId).catch(() => undefined);
   await enqueueSchedules(effects, [{ postId: row.postId, scheduleVersion: row.scheduleVersion, startAt: row.startAt }]);
   if (previous.status === "handed_off") await effects.scheduleChanged(row.postId);
@@ -246,6 +255,7 @@ export async function cancelSchedule(userId: string, postId: string, effects: Sc
     return schedule;
   });
   if (!out) return { postId, cancelled: true, alreadyCancelled: true };
+  await invalidate(userId, "posts");
   if (out.queueJobId) await effects.removeHandoffJob(out.queueJobId).catch(() => undefined);
   await effects.scheduleChanged(postId);
   return { postId, cancelled: true, alreadyCancelled: false };
@@ -262,6 +272,7 @@ export async function closeScheduleAfterCancel(postId: string, effects: Scheduli
     .where(and(eq(scheduledPosts.postId, UuidSchema.parse(postId)), inArray(scheduledPosts.status, ["scheduled", "handed_off", "missed"])))
     .returning({ queueJobId: scheduledPosts.queueJobId });
   if (!row) return;
+  await invalidatePostOwner(UuidSchema.parse(postId));
   if (row.queueJobId) await effects.removeHandoffJob(row.queueJobId).catch(() => undefined);
   await effects.scheduleChanged(postId);
 }
@@ -304,6 +315,7 @@ export async function publishNow(userId: string, postId: string, effects: Schedu
     return { previous: schedule, version: next };
   });
 
+  await invalidate(userId, "posts");
   if (previous.queueJobId) await effects.removeHandoffJob(previous.queueJobId).catch(() => undefined);
   if (previous.status === "handed_off") await effects.scheduleChanged(postId);
   const result = await handoff(postId, version, effects, now);
@@ -332,6 +344,7 @@ export async function completeSchedule(postId: string, scheduleVersion: number, 
     .update(scheduledPosts)
     .set({ status: "completed", completedAt: now, lockedAt: null, updatedAt: now })
     .where(and(eq(scheduledPosts.postId, UuidSchema.parse(postId)), eq(scheduledPosts.scheduleVersion, scheduleVersion)));
+  await invalidatePostOwner(UuidSchema.parse(postId));
 }
 
 /** Publishing failed for good: record it on the schedule too (no-op for unscheduled posts). */
@@ -340,6 +353,7 @@ export async function failSchedule(postId: string, message: string, now = new Da
     .update(scheduledPosts)
     .set({ status: "failed", lastError: message.slice(0, 500), lockedAt: null, updatedAt: now })
     .where(and(eq(scheduledPosts.postId, UuidSchema.parse(postId)), inArray(scheduledPosts.status, OPEN)));
+  await invalidatePostOwner(UuidSchema.parse(postId));
 }
 
 // ---------------------------------------------------------------------------
@@ -430,6 +444,7 @@ export async function sweep(effects: SchedulingEffects, now = new Date()): Promi
       .set({ status: "failed", errorCode: "schedule_missed", errorMessage: reason, updatedAt: now })
       .where(and(eq(posts.id, schedule.postId), eq(posts.status, "scheduled")));
     result.missed++;
+    await invalidate(schedule.userId, "posts");
     await effects.notify({
       userId: schedule.userId,
       type: "schedule_missed",
@@ -468,6 +483,7 @@ export async function sweep(effects: SchedulingEffects, now = new Date()): Promi
       .update(posts)
       .set({ status: "failed", errorCode: "schedule_stuck", errorMessage: reason, updatedAt: now })
       .where(and(eq(posts.id, schedule.postId), inArray(posts.status, ["scheduled", "queued", "publishing"])));
+    await invalidate(schedule.userId, "posts");
     await effects.scheduleChanged(schedule.postId);
     result.stuck++;
     await effects.notify({

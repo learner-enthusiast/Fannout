@@ -1,7 +1,9 @@
 import { and, db, desc, eq, socialConnections } from "@repo/database";
 import { errors } from "@repo/errors";
 import { z } from "zod";
-import { afterCursor, cursorTimestamp, PaginationInputSchema, toPage } from "../common/pagination";
+import { resetAnalyticsSyncAfterReconnect } from "../analytics/reconnect";
+import { cached, invalidate } from "../cache";
+import { afterCursor, cursorTimestamp, PaginationInputSchema, paginatedOutput, toPage } from "../common/pagination";
 import {
   ListSocialConnectionsInputSchema,
   SocialConnectionRowSchema,
@@ -18,6 +20,15 @@ import {
 const UuidSchema = z.uuid();
 
 /** Insert, or refresh tokens/profile when the same provider account is reconnected. */
+/**
+ * A connection changed (created, updated, deactivated, deleted, token/expiry/status): drop its cached
+ * list, the platform lookups that live on it (playlists…) and its analytics. Call after the commit.
+ */
+export async function invalidateConnection(userId: string, connectionId: string) {
+  // "mentions": the composer seeds suggestions from the user's connected accounts.
+  await invalidate(userId, "connections", `platform:${connectionId}`, "analytics", "mentions");
+}
+
 export async function upsertSocialConnection(
   input: UpsertSocialConnectionInput,
 ): Promise<SocialConnectionRow> {
@@ -38,7 +49,10 @@ export async function upsertSocialConnection(
     .returning();
 
   if (!row) return errors.internal("Failed to upsert social connection");
-  return SocialConnectionRowSchema.parse(row);
+  const parsed = SocialConnectionRowSchema.parse(row);
+  if (data.accessTokenEncrypted) await resetAnalyticsSyncAfterReconnect(parsed.id);
+  await invalidateConnection(parsed.userId, parsed.id);
+  return parsed;
 }
 
 export async function getSocialConnectionById(
@@ -116,7 +130,9 @@ export async function updateSocialConnection(
     .returning();
 
   if (!row) return errors.notFound("Social connection");
-  return SocialConnectionRowSchema.parse(row);
+  const parsed = SocialConnectionRowSchema.parse(row);
+  await invalidateConnection(parsed.userId, parsed.id);
+  return parsed;
 }
 
 /** Disconnect without deleting history: marks inactive and clears tokens. */
@@ -145,6 +161,7 @@ export async function deleteSocialConnection(userId: string, id: string): Promis
     .returning({ id: socialConnections.id });
 
   if (!row) errors.notFound("Social connection");
+  await invalidateConnection(userId, row!.id);
 }
 
 /**
@@ -167,9 +184,29 @@ export function toSocialConnectionView(
 }
 
 /** Connections newest first, 10 per page (created_at DESC, id DESC). */
+const SocialConnectionPageSchema = paginatedOutput(SocialConnectionViewSchema);
+
+/** Group "connections". Views only (token fields are stripped), never rows. */
 export async function listSocialConnectionsPage(
   userId: string,
   input: { cursor?: string | null; limit?: number; provider?: string } = {},
+) {
+  const { cursor, limit } = PaginationInputSchema.parse(input);
+  return cached({
+    userId,
+    group: "connections",
+    key: "listSocialConnectionsPage",
+    input: { cursor: cursor ?? null, limit, provider: input.provider ?? null },
+    schema: SocialConnectionPageSchema,
+    // "connected" is derived from the token expiry: a cached item whose token has since expired is re-derived.
+    isStale: (page) => page.items.some((item) => item.status === "connected" && item.accessExpiry !== null && item.accessExpiry.getTime() <= Date.now()),
+    load: () => loadSocialConnectionsPage(userId, input),
+  });
+}
+
+async function loadSocialConnectionsPage(
+  userId: string,
+  input: { cursor?: string | null; limit?: number; provider?: string },
 ) {
   const { cursor, limit } = PaginationInputSchema.parse(input);
   const provider = input.provider;

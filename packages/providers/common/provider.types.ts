@@ -1,6 +1,6 @@
 import type { TokenSource } from "./token-manager";
 
-export type ProviderName = "LINKEDIN" | "X" | "YOUTUBE" | "THREADS" | "FACEBOOK";
+export type ProviderName = "LINKEDIN" | "X" | "YOUTUBE" | "THREADS" | "FACEBOOK" | "INSTAGRAM";
 
 /** Minimal fetch signature; injectable for tests. */
 export type FetchLike = (input: string, init: RequestInit) => Promise<Response>;

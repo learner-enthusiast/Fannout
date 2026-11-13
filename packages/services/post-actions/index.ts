@@ -1,11 +1,12 @@
 import { and, asc, db, eq, inArray, postMedia, posts, socialConnections } from "@repo/database";
 import { errors } from "@repo/errors";
 import { z } from "zod";
+import { cached, invalidate } from "../cache";
 import { omit } from "../lib/omit";
 import { publishBatch } from "../publishing";
 import { PostConfigSchema } from "../publishing/model";
 import { PLATFORMS, platformForProvider, type Platform } from "../publishing/platforms";
-import { RevisionSchema, type DeleteResult } from "./model";
+import { PostDetailSchema, RevisionSchema, type DeleteResult } from "./model";
 import { planDelete, planEdit } from "./plan";
 
 const UuidSchema = z.uuid();
@@ -36,7 +37,8 @@ async function transition(postId: string, from: string[], set: Partial<typeof po
     .update(posts)
     .set({ ...set, updatedAt: new Date() })
     .where(and(eq(posts.id, postId), inArray(posts.status, from)))
-    .returning({ status: posts.status });
+    .returning({ status: posts.status, userId: posts.userId });
+  if (row) await invalidate(row.userId, "posts");
   return row ?? null;
 }
 
@@ -135,6 +137,7 @@ export async function requestEdit(userId: string, postId: string, changes: Recor
     .where(and(eq(posts.id, post.id), eq(posts.status, "published")))
     .returning({ id: posts.id });
   if (!row) return errors.conflict("The post changed meanwhile; refresh and try again");
+  await invalidate(post.userId, "posts");
   return {
     result: { postId, mode: "queued" as const, editStatus: "editing" },
     event: { name: "post/edit.requested", data: { postId, userId: post.userId, socialConnectionId: post.socialConnectionId } } satisfies PostActionEvent,
@@ -169,6 +172,19 @@ export async function requestRepost(userId: string, input: { postId: string; cha
 
 /** Post detail incl. revisions (History tab). */
 export async function getPostDetail(userId: string, postId: string) {
+  return cached({
+    userId,
+    group: "posts",
+    key: "getPostDetail",
+    input: { postId },
+    schema: PostDetailSchema,
+    // Never stored mid-publish / mid-delete / mid-edit (the page polls those states).
+    cacheable: (detail) => !["queued", "publishing", "deleting"].includes(detail.status) && detail.editStatus !== "editing",
+    load: () => loadPostDetail(userId, postId),
+  });
+}
+
+async function loadPostDetail(userId: string, postId: string) {
   const { post, connection, platform, config } = await loadOwned(userId, postId);
   const capabilities = PLATFORMS[platform].capabilities;
   return {

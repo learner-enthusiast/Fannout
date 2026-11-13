@@ -137,7 +137,7 @@ export function AddMediaDialog({
                                             isPicked ? 'border-primary' : 'border-transparent'
                                         )}
                                     >
-                                        <MediaPreview type={item.type} url={item.url} alt={item.name} />
+                                        <MediaPreview type={item.type} url={item.url} thumbUrl={item.thumbUrl} alt={item.name} />
                                         <span className="truncate px-2 py-1 text-meta">{item.name}</span>
                                         {isPicked ? (
                                             <span className="absolute top-2 end-2 flex size-6 items-center justify-center rounded-full bg-primary text-primary-foreground">

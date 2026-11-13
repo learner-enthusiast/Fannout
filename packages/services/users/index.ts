@@ -6,6 +6,7 @@ import {
   type ClerkUserPayload,
   type UserRow,
 } from "./model";
+import { cached, delKey, globalKey } from "../cache";
 import { env } from "../env";
 
 const USER_EXISTS_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -59,6 +60,8 @@ export async function upsertUserFromClerk(input: ClerkUserPayload): Promise<User
 
   const user = UserRowSchema.parse(row);
   userExistsCache.set(payload.id, { id: user.id, expiresAt: Date.now() + USER_EXISTS_CACHE_TTL_MS });
+  // Committed (single statement): drop the shared copy so the next read sees the new row.
+  await delKey(globalKey("user", payload.id));
   return user;
 }
 
@@ -69,6 +72,7 @@ export async function softDeleteUser(clerkUserId: string): Promise<void> {
     .set({ deletedAt: new Date(), updatedAt: new Date() })
     .where(eq(users.clerkId, id));
   userExistsCache.delete(id);
+  await delKey(globalKey("user", id));
 }
 
 /** Makes sure the Clerk user has a row and returns its internal (uuid) id. */
@@ -79,7 +83,7 @@ export async function ensureUser(clerkUserId: string): Promise<string> {
     return cached.id;
   }
 
-  const [existing] = await db.select({ id: users.id }).from(users).where(eq(users.clerkId, id)).limit(1);
+  const existing = await loadUserByClerkId(id);
   if (existing) {
     userExistsCache.set(id, { id: existing.id, expiresAt: Date.now() + USER_EXISTS_CACHE_TTL_MS });
     return existing.id;
@@ -104,10 +108,23 @@ export async function ensureUser(clerkUserId: string): Promise<string> {
   return user.id;
 }
 
+/** Group "user": global key fn:cache:v1:user:{clerkId}. A missing user is never served from the cache. */
+function loadUserByClerkId(clerkId: string): Promise<UserRow | null> {
+  return cached({
+    userId: null,
+    group: "user",
+    key: globalKey("user", clerkId),
+    schema: UserRowSchema.nullable(),
+    isStale: (value) => value === null,
+    load: async () => {
+      const [row] = await db.select().from(users).where(eq(users.clerkId, clerkId)).limit(1);
+      return row ? UserRowSchema.parse(row) : null;
+    },
+  });
+}
+
 export async function getUserByClerkId(clerkUserId: string): Promise<UserRow | null> {
-  const id = zodClerkUserId(clerkUserId);
-  const [row] = await db.select().from(users).where(eq(users.clerkId, id)).limit(1);
-  return row ? UserRowSchema.parse(row) : null;
+  return loadUserByClerkId(zodClerkUserId(clerkUserId));
 }
 
 function zodClerkUserId(clerkUserId: string) {

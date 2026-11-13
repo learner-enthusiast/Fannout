@@ -1,5 +1,6 @@
 import type { OAuthProviderSlug } from "../model";
 import { createFacebookProvider } from "./facebook";
+import { createInstagramProvider } from "./instagram";
 import { createLinkedInProvider } from "./linkedin";
 import { createThreadsProvider } from "./threads";
 import type { OAuthProviderAdapter, ProviderCredentials } from "./types";
@@ -16,6 +17,7 @@ export function createProviderRegistry(config: ProvidersConfig): ProviderRegistr
     youtube: createYouTubeProvider(config.youtube),
     facebook: createFacebookProvider(config.facebook),
     threads: createThreadsProvider(config.threads),
+    instagram: createInstagramProvider(config.instagram),
   };
 }
 

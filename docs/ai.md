@@ -4,7 +4,7 @@ Fannout lets a person prepare media once and fan it out to connected social plat
 Use this guide when acting through the HTTP API with a scoped personal API key.
 This document is the contract. Follow it exactly.
 
-Generated from code at 6150538 on 2026-11-08. Do not edit generated sections by hand.
+Generated from code at b048acf on 2026-11-13. Do not edit generated sections by hand.
 
 ## Authentication
 
@@ -122,6 +122,32 @@ Minimal valid `input` (required fields only):
 {}
 ```
 
+### Instagram (instagram)
+
+video: true; photos: true; max photos: 20; thumbnail: true; delete: false; edit: false (none).
+
+- Delete note: Delete or edit this post in the Instagram app
+- Edit note: Delete or edit this post in the Instagram app
+- Media rules: maxVideoBytes=314572800, minVideoSeconds=3, maxVideoSeconds=900, maxImageBytes=8388608, videoMimeTypes=video/mp4,video/quicktime, imageMimeTypes=image/jpeg, requiresPublicUrl=true
+
+Fields for `targets[].input` when the account is Instagram:
+
+| Field | Type | Required | Default | Constraints | Description |
+| --- | --- | --- | --- | --- | --- |
+| caption | string | optional | — | max length 2200 | Caption (max 2,200 characters, 30 hashtags, 20 @mentions). Mentions are plain @username text. |
+| shareToFeed | boolean | required | true | default: true | Reels only: also show the reel in the profile feed grid (default true). |
+| thumbOffsetMs | integer | optional | — | min 0; max 9007199254740991 | Reels only: millisecond offset of the video frame used as cover. Ignored when a cover image is picked. |
+| altText | string | optional | — | max length 1000 | Image alt text (max 1,000 characters). Photos only; ignored for reels. |
+| collaborators | string[] | optional | — | max items 3 | Reels only: up to 3 Instagram usernames to invite as collaborators (no @). |
+
+Minimal valid `input` (required fields only):
+
+```json
+{
+  "shareToFeed": true
+}
+```
+
 ### LinkedIn (linkedin)
 
 video: true; photos: true; max photos: 9; thumbnail: false; delete: true; edit: false (none).
@@ -138,11 +164,11 @@ Fields for `targets[].input` when the account is LinkedIn:
 | visibility | PUBLIC \| CONNECTIONS | required | — | enum: PUBLIC, CONNECTIONS | PUBLIC = anyone; CONNECTIONS = connections only (member posts). |
 | videoTitle | string | optional | — | max length 200 | Title of the video (max 200 characters). |
 | isReshareDisabledByAuthor | boolean | optional | — | — | Stop others from resharing the post. |
-| mentions[].contactId | string (uuid) | optional | — | format uuid | Undocumented — see field name and constraints. |
-| mentions[].start | integer | optional | — | min 0; max 9007199254740991 | Undocumented — see field name and constraints. |
-| mentions[].length | integer | optional | — | max 9007199254740991 | Undocumented — see field name and constraints. |
-| mentions[].displayName | string | optional | — | min length 1; max length 200 | Undocumented — see field name and constraints. |
-| mentions[].platformRef | string | optional | — | pattern ^urn:li:(person\|organization):[^:]+$ | Undocumented — see field name and constraints. |
+| mentions[].contactId | string (uuid) | optional | — | format uuid | Mention contact ID (from POST /mentions). |
+| mentions[].start | integer | optional | — | min 0; max 9007199254740991 | Zero-based start offset of the mention in the final text. |
+| mentions[].length | integer | optional | — | max 9007199254740991 | Length of the mention text in the final text. |
+| mentions[].displayName | string | optional | — | min length 1; max length 200 | Name exactly as shown on LinkedIn. |
+| mentions[].platformRef | string | optional | — | pattern ^urn:li:(person\|organization):[^:]+$ | LinkedIn URN: urn:li:person:{id} or urn:li:organization:{id}. |
 
 Minimal valid `input` (required fields only):
 
@@ -264,10 +290,10 @@ curl -X POST "${API_PUBLIC_URL}/api/ai/instruction-presets" \
 
 | Field | Type | Default | Constraints | Description |
 | --- | --- | --- | --- | --- |
-| id | string (uuid) | — | format uuid | Undocumented — see field name and constraints. |
-| name | string | — | — | Undocumented — see field name and constraints. |
-| text | string | — | — | Undocumented — see field name and constraints. |
-| createdAt | string (date-time) | — | format date-time | Undocumented — see field name and constraints. |
+| id | string (uuid) | — | format uuid | Preset ID. |
+| name | string | — | — | Preset name. |
+| text | string | — | — | Instruction text. |
+| createdAt | string (date-time) | — | format date-time | When the preset was created. |
 
 #### Example response
 
@@ -415,10 +441,10 @@ curl -X GET "${API_PUBLIC_URL}/api/ai/instruction-presets" \
 
 | Field | Type | Default | Constraints | Description |
 | --- | --- | --- | --- | --- |
-| items[].id | string (uuid) | — | format uuid | Undocumented — see field name and constraints. |
-| items[].name | string | — | — | Undocumented — see field name and constraints. |
-| items[].text | string | — | — | Undocumented — see field name and constraints. |
-| items[].createdAt | string (date-time) | — | format date-time | Undocumented — see field name and constraints. |
+| items[].id | string (uuid) | — | format uuid | Preset ID. |
+| items[].name | string | — | — | Preset name. |
+| items[].text | string | — | — | Instruction text. |
+| items[].createdAt | string (date-time) | — | format date-time | When the preset was created. |
 | nextCursor | string \| null | — | — | Pass as cursor to get the next page; null when there are no more items. |
 
 #### Example response
@@ -544,11 +570,11 @@ curl -X GET "${API_PUBLIC_URL}/api/analytics/overview" \
 | kpis.publishSuccessRate.deltaPercent | number \| null | — | — | (current − previous) / previous × 100; null when either side is missing or previous is 0. |
 | kpis.platform | object | — | — | Platform-specific tiles keyed by normalized metric (single-connection view only). |
 | series[].date | string (date) | — | format date | YYYY-MM-DD. |
-| series[].platform | youtube \| x \| linkedin \| threads \| facebook | — | enum: youtube, x, linkedin, threads, facebook | Platform key. |
+| series[].platform | youtube \| x \| linkedin \| threads \| facebook \| instagram | — | enum: youtube, x, linkedin, threads, facebook, instagram | Platform key. |
 | series[].views | number \| null | — | — | Views that day; null = not reported. |
 | series[].engagement | number \| null | — | — | Engagement that day; null = not reported. |
 | series[].followersNet | number \| null | — | — | Followers gained − lost that day; null = not reported. |
-| byPlatform[].platform | youtube \| x \| linkedin \| threads \| facebook | — | enum: youtube, x, linkedin, threads, facebook | Platform key. |
+| byPlatform[].platform | youtube \| x \| linkedin \| threads \| facebook \| instagram | — | enum: youtube, x, linkedin, threads, facebook, instagram | Platform key. |
 | byPlatform[].views | number \| null | — | — | Views in range. |
 | byPlatform[].engagement | number \| null | — | — | Engagement in range. |
 | publishStats.published | integer | — | min -9007199254740991; max 9007199254740991 | Published in range. |
@@ -557,15 +583,15 @@ curl -X GET "${API_PUBLIC_URL}/api/analytics/overview" \
 | publishStats.successRate | number \| null | — | — | published ÷ (published + failed) × 100. |
 | upcoming[].postId | string (uuid) | — | format uuid | Post ID. |
 | upcoming[].name | string | — | — | Post name. |
-| upcoming[].platform | youtube \| x \| linkedin \| threads \| facebook \| null | — | enum: youtube, x, linkedin, threads, facebook | Platform key. |
+| upcoming[].platform | youtube \| x \| linkedin \| threads \| facebook \| instagram \| null | — | enum: youtube, x, linkedin, threads, facebook, instagram | Platform key. |
 | upcoming[].scheduledAt | string | — | — | ISO time. |
 | recentFailures[].postId | string (uuid) | — | format uuid | Post ID. |
 | recentFailures[].name | string | — | — | Post name. |
-| recentFailures[].platform | youtube \| x \| linkedin \| threads \| facebook \| null | — | enum: youtube, x, linkedin, threads, facebook | Platform key. |
+| recentFailures[].platform | youtube \| x \| linkedin \| threads \| facebook \| instagram \| null | — | enum: youtube, x, linkedin, threads, facebook, instagram | Platform key. |
 | recentFailures[].errorMessage | string \| null | — | — | Why it failed. |
 | recentFailures[].failedAt | string | — | — | ISO time. |
 | availability[].connectionId | string (uuid) | — | format uuid | Social connection ID. |
-| availability[].platform | youtube \| x \| linkedin \| threads \| facebook | — | enum: youtube, x, linkedin, threads, facebook | Platform key. |
+| availability[].platform | youtube \| x \| linkedin \| threads \| facebook \| instagram | — | enum: youtube, x, linkedin, threads, facebook, instagram | Platform key. |
 | availability[].username | string \| null | — | — | Account handle. |
 | availability[].status | ready \| no_data \| needs_reconnect \| unsupported \| error | — | enum: ready, no_data, needs_reconnect, unsupported, error | ready = has data; no_data = waiting for the first sync; needs_reconnect = missing scope/token; unsupported = platform gives no analytics; error = last sync failed. |
 | availability[].missingScopes | string[] | — | — | Scopes to grant by reconnecting. |
@@ -704,7 +730,7 @@ curl -X GET "${API_PUBLIC_URL}/api/analytics/posts/00000000-0000-4000-8000-00000
 | Field | Type | Default | Constraints | Description |
 | --- | --- | --- | --- | --- |
 | postId | string (uuid) | — | format uuid | Post ID. |
-| platform | youtube \| x \| linkedin \| threads \| facebook \| null | — | enum: youtube, x, linkedin, threads, facebook | Platform key. |
+| platform | youtube \| x \| linkedin \| threads \| facebook \| instagram \| null | — | enum: youtube, x, linkedin, threads, facebook, instagram | Platform key. |
 | latest | object \| null | — | — | Most recent snapshot; null before the first sync. |
 | engagement | number \| null | — | — | Engagement of the latest snapshot. |
 | snapshots[].capturedAt | string | — | — | ISO time. |
@@ -813,7 +839,7 @@ curl -X GET "${API_PUBLIC_URL}/api/analytics/sync-status" \
 | Field | Type | Default | Constraints | Description |
 | --- | --- | --- | --- | --- |
 | connections[].connectionId | string (uuid) | — | format uuid | Social connection ID. |
-| connections[].platform | youtube \| x \| linkedin \| threads \| facebook | — | enum: youtube, x, linkedin, threads, facebook | Platform key. |
+| connections[].platform | youtube \| x \| linkedin \| threads \| facebook \| instagram | — | enum: youtube, x, linkedin, threads, facebook, instagram | Platform key. |
 | connections[].username | string \| null | — | — | Account handle. |
 | connections[].status | ready \| no_data \| needs_reconnect \| unsupported \| error | — | enum: ready, no_data, needs_reconnect, unsupported, error | ready = has data; no_data = waiting for the first sync; needs_reconnect = missing scope/token; unsupported = platform gives no analytics; error = last sync failed. |
 | connections[].missingScopes | string[] | — | — | Scopes to grant by reconnecting. |
@@ -882,7 +908,7 @@ curl -X GET "${API_PUBLIC_URL}/api/analytics/top-posts" \
 | --- | --- | --- | --- | --- |
 | items[].postId | string (uuid) | — | format uuid | Post ID. |
 | items[].connectionId | string (uuid) | — | format uuid | Social connection ID. |
-| items[].platform | youtube \| x \| linkedin \| threads \| facebook \| null | — | enum: youtube, x, linkedin, threads, facebook | Platform key. |
+| items[].platform | youtube \| x \| linkedin \| threads \| facebook \| instagram \| null | — | enum: youtube, x, linkedin, threads, facebook, instagram | Platform key. |
 | items[].title | string | — | — | Post name or caption. |
 | items[].publishedAt | string \| null | — | — | ISO time. |
 | items[].postUrl | string \| null | — | — | Link on the platform. |
@@ -1251,6 +1277,7 @@ curl -X GET "${API_PUBLIC_URL}/api/folders/00000000-0000-4000-8000-000000000000/
 | items[].media.width | number \| null | — | — | Pixel width. |
 | items[].media.height | number \| null | — | — | Pixel height. |
 | items[].media.previewUrl | string \| null | — | — | Short-lived presigned URL for previewing the media. |
+| items[].media.thumbUrl | string \| null | — | — | Short-lived presigned URL of a small (≤ 320 px) JPEG thumbnail; null when none exists. Prefer it over previewUrl in grids. |
 | nextCursor | string \| null | — | — | Pass as cursor to get the next page; null when there are no more items. |
 
 #### Example response
@@ -1273,7 +1300,8 @@ curl -X GET "${API_PUBLIC_URL}/api/folders/00000000-0000-4000-8000-000000000000/
         "durationSeconds": 1,
         "width": 1,
         "height": 1,
-        "previewUrl": "x"
+        "previewUrl": "x",
+        "thumbUrl": "x"
       }
     }
   ],
@@ -1667,6 +1695,7 @@ curl -X POST "${API_PUBLIC_URL}/api/media/00000000-0000-4000-8000-000000000000/c
 | folderSuggestion | object \| null | — | — | Folder proposed from a social-package JSON; create it with POST /folders/from-suggestion. |
 | error | string \| null | — | — | Why processing failed, when status is failed. |
 | url | string \| null | — | — | Short-lived presigned download URL; null until the upload has finished. |
+| thumbUrl | string \| null | — | — | Short-lived presigned URL of a small (≤ 320 px) JPEG thumbnail; null for non-visual media or when none was generated yet. Prefer it over url for lists and grids. |
 | createdAt | string (date-time) | — | format date-time | When the media was created. |
 | updatedAt | string (date-time) | — | format date-time | When the media last changed. |
 
@@ -1703,6 +1732,7 @@ curl -X POST "${API_PUBLIC_URL}/api/media/00000000-0000-4000-8000-000000000000/c
   },
   "error": "x",
   "url": "x",
+  "thumbUrl": "x",
   "createdAt": "2020-01-01T00:00:00.000Z",
   "updatedAt": "2020-01-01T00:00:00.000Z"
 }
@@ -1849,6 +1879,7 @@ curl -X POST "${API_PUBLIC_URL}/api/media/00000000-0000-4000-8000-000000000000/f
 | folderSuggestion | object \| null | — | — | Folder proposed from a social-package JSON; create it with POST /folders/from-suggestion. |
 | error | string \| null | — | — | Why processing failed, when status is failed. |
 | url | string \| null | — | — | Short-lived presigned download URL; null until the upload has finished. |
+| thumbUrl | string \| null | — | — | Short-lived presigned URL of a small (≤ 320 px) JPEG thumbnail; null for non-visual media or when none was generated yet. Prefer it over url for lists and grids. |
 | createdAt | string (date-time) | — | format date-time | When the media was created. |
 | updatedAt | string (date-time) | — | format date-time | When the media last changed. |
 
@@ -1885,6 +1916,7 @@ curl -X POST "${API_PUBLIC_URL}/api/media/00000000-0000-4000-8000-000000000000/f
   },
   "error": "x",
   "url": "x",
+  "thumbUrl": "x",
   "createdAt": "2020-01-01T00:00:00.000Z",
   "updatedAt": "2020-01-01T00:00:00.000Z"
 }
@@ -1934,6 +1966,7 @@ curl -X GET "${API_PUBLIC_URL}/api/media/00000000-0000-4000-8000-000000000000" \
 | folderSuggestion | object \| null | — | — | Folder proposed from a social-package JSON; create it with POST /folders/from-suggestion. |
 | error | string \| null | — | — | Why processing failed, when status is failed. |
 | url | string \| null | — | — | Short-lived presigned download URL; null until the upload has finished. |
+| thumbUrl | string \| null | — | — | Short-lived presigned URL of a small (≤ 320 px) JPEG thumbnail; null for non-visual media or when none was generated yet. Prefer it over url for lists and grids. |
 | createdAt | string (date-time) | — | format date-time | When the media was created. |
 | updatedAt | string (date-time) | — | format date-time | When the media last changed. |
 | folders[].folderId | string (uuid) | — | format uuid | Folder ID. |
@@ -1974,6 +2007,7 @@ curl -X GET "${API_PUBLIC_URL}/api/media/00000000-0000-4000-8000-000000000000" \
   },
   "error": "x",
   "url": "x",
+  "thumbUrl": "x",
   "createdAt": "2020-01-01T00:00:00.000Z",
   "updatedAt": "2020-01-01T00:00:00.000Z",
   "folders": [
@@ -2035,6 +2069,7 @@ curl -X GET "${API_PUBLIC_URL}/api/media" \
 | items[].folderSuggestion | object \| null | — | — | Folder proposed from a social-package JSON; create it with POST /folders/from-suggestion. |
 | items[].error | string \| null | — | — | Why processing failed, when status is failed. |
 | items[].url | string \| null | — | — | Short-lived presigned download URL; null until the upload has finished. |
+| items[].thumbUrl | string \| null | — | — | Short-lived presigned URL of a small (≤ 320 px) JPEG thumbnail; null for non-visual media or when none was generated yet. Prefer it over url for lists and grids. |
 | items[].createdAt | string (date-time) | — | format date-time | When the media was created. |
 | items[].updatedAt | string (date-time) | — | format date-time | When the media last changed. |
 | nextCursor | string \| null | — | — | Pass as cursor to get the next page; null when there are no more items. |
@@ -2074,6 +2109,7 @@ curl -X GET "${API_PUBLIC_URL}/api/media" \
       },
       "error": "x",
       "url": "x",
+      "thumbUrl": "x",
       "createdAt": "2020-01-01T00:00:00.000Z",
       "updatedAt": "2020-01-01T00:00:00.000Z"
     }
@@ -2131,6 +2167,7 @@ curl -X PATCH "${API_PUBLIC_URL}/api/media/00000000-0000-4000-8000-000000000000"
 | folderSuggestion | object \| null | — | — | Folder proposed from a social-package JSON; create it with POST /folders/from-suggestion. |
 | error | string \| null | — | — | Why processing failed, when status is failed. |
 | url | string \| null | — | — | Short-lived presigned download URL; null until the upload has finished. |
+| thumbUrl | string \| null | — | — | Short-lived presigned URL of a small (≤ 320 px) JPEG thumbnail; null for non-visual media or when none was generated yet. Prefer it over url for lists and grids. |
 | createdAt | string (date-time) | — | format date-time | When the media was created. |
 | updatedAt | string (date-time) | — | format date-time | When the media last changed. |
 
@@ -2167,6 +2204,7 @@ curl -X PATCH "${API_PUBLIC_URL}/api/media/00000000-0000-4000-8000-000000000000"
   },
   "error": "x",
   "url": "x",
+  "thumbUrl": "x",
   "createdAt": "2020-01-01T00:00:00.000Z",
   "updatedAt": "2020-01-01T00:00:00.000Z"
 }
@@ -2184,9 +2222,9 @@ curl -X PATCH "${API_PUBLIC_URL}/api/media/00000000-0000-4000-8000-000000000000"
 
 | Field | Type | Required | Default | Constraints | Description |
 | --- | --- | --- | --- | --- | --- |
-| platform | x \| threads \| linkedin \| facebook | required | — | enum: x, threads, linkedin, facebook | Platform this contact is for. |
+| platform | x \| threads \| instagram \| linkedin \| facebook | required | — | enum: x, threads, instagram, linkedin, facebook | Platform this contact is for. |
 | displayName | string | required | — | min length 1; max length 200 | Label shown in the composer; must match LinkedIn exactly for LinkedIn mentions. |
-| handle | string | optional | — | max length 100; pattern ^[A-Za-z0-9_.]+$ | X/Threads username without @; letters, numbers, underscores and periods. |
+| handle | string | optional | — | max length 100; pattern ^[A-Za-z0-9_.]+$ | X/Threads/Instagram username without @; letters, numbers, underscores and periods. |
 | platformRef | string | optional | — | max length 300 | LinkedIn person/organization URN or numeric Facebook Page ID. |
 | avatarUrl | string (uri) | optional | — | format uri | Optional avatar URL for the contact list. |
 
@@ -2206,15 +2244,15 @@ curl -X POST "${API_PUBLIC_URL}/api/mentions" \
 
 | Field | Type | Default | Constraints | Description |
 | --- | --- | --- | --- | --- |
-| id | string (uuid) | — | format uuid | Undocumented — see field name and constraints. |
-| platform | x \| threads \| linkedin \| facebook | — | enum: x, threads, linkedin, facebook | Undocumented — see field name and constraints. |
-| displayName | string | — | — | Undocumented — see field name and constraints. |
-| handle | string \| null | — | — | Undocumented — see field name and constraints. |
-| platformRef | string \| null | — | — | Undocumented — see field name and constraints. |
-| avatarUrl | string \| null | — | — | Undocumented — see field name and constraints. |
-| useCount | integer | — | min 0; max 9007199254740991 | Undocumented — see field name and constraints. |
-| lastUsedAt | string (date-time) \| null | — | format date-time | Undocumented — see field name and constraints. |
-| createdAt | string (date-time) | — | format date-time | Undocumented — see field name and constraints. |
+| id | string (uuid) | — | format uuid | Mention contact ID. |
+| platform | x \| threads \| instagram \| linkedin \| facebook | — | enum: x, threads, instagram, linkedin, facebook | Platform the contact belongs to. |
+| displayName | string | — | — | Label shown in the composer. |
+| handle | string \| null | — | — | X/Threads/Instagram username without @. |
+| platformRef | string \| null | — | — | LinkedIn URN or numeric Facebook Page ID. |
+| avatarUrl | string \| null | — | — | Optional avatar URL. |
+| useCount | integer | — | min 0; max 9007199254740991 | Times this contact was used in a published post. |
+| lastUsedAt | string (date-time) \| null | — | format date-time | When the contact was last used in a published post. |
+| createdAt | string (date-time) | — | format date-time | When the contact was created. |
 
 #### Example response
 
@@ -2244,7 +2282,7 @@ curl -X POST "${API_PUBLIC_URL}/api/mentions" \
 
 | Field | Type | Required | Default | Constraints | Description |
 | --- | --- | --- | --- | --- | --- |
-| id | string (uuid) | required | — | format uuid | Undocumented — see field name and constraints. |
+| id | string (uuid) | required | — | format uuid | Mention contact ID. |
 
 #### Example request
 
@@ -2258,7 +2296,7 @@ curl -X DELETE "${API_PUBLIC_URL}/api/mentions/00000000-0000-4000-8000-000000000
 
 | Field | Type | Default | Constraints | Description |
 | --- | --- | --- | --- | --- |
-| updated | boolean | — | — | Undocumented — see field name and constraints. |
+| updated | boolean | — | — | Whether a contact was changed. |
 
 #### Example response
 
@@ -2282,7 +2320,7 @@ curl -X DELETE "${API_PUBLIC_URL}/api/mentions/00000000-0000-4000-8000-000000000
 | --- | --- | --- | --- | --- | --- |
 | cursor | string \| null | optional | — | min length 1; max length 300 | Opaque cursor from the previous page's nextCursor; omit for the first page. |
 | limit | integer | required | 10 | min 1; max 10; default: 10 | Items per page (max 10). |
-| platform | x \| threads \| linkedin \| facebook | required | — | enum: x, threads, linkedin, facebook | Platform whose contacts to search. |
+| platform | x \| threads \| instagram \| linkedin \| facebook | required | — | enum: x, threads, instagram, linkedin, facebook | Platform whose contacts to search. |
 | q | string | required | "" | max length 100; default: "" | Case-insensitive display-name/handle search; empty returns most-used contacts. |
 
 #### Example request
@@ -2297,15 +2335,15 @@ curl -X GET "${API_PUBLIC_URL}/api/mentions/search" \
 
 | Field | Type | Default | Constraints | Description |
 | --- | --- | --- | --- | --- |
-| items[].id | string (uuid) | — | format uuid | Undocumented — see field name and constraints. |
-| items[].platform | x \| threads \| linkedin \| facebook | — | enum: x, threads, linkedin, facebook | Undocumented — see field name and constraints. |
-| items[].displayName | string | — | — | Undocumented — see field name and constraints. |
-| items[].handle | string \| null | — | — | Undocumented — see field name and constraints. |
-| items[].platformRef | string \| null | — | — | Undocumented — see field name and constraints. |
-| items[].avatarUrl | string \| null | — | — | Undocumented — see field name and constraints. |
-| items[].useCount | integer | — | min 0; max 9007199254740991 | Undocumented — see field name and constraints. |
-| items[].lastUsedAt | string (date-time) \| null | — | format date-time | Undocumented — see field name and constraints. |
-| items[].createdAt | string (date-time) | — | format date-time | Undocumented — see field name and constraints. |
+| items[].id | string (uuid) | — | format uuid | Mention contact ID. |
+| items[].platform | x \| threads \| instagram \| linkedin \| facebook | — | enum: x, threads, instagram, linkedin, facebook | Platform the contact belongs to. |
+| items[].displayName | string | — | — | Label shown in the composer. |
+| items[].handle | string \| null | — | — | X/Threads/Instagram username without @. |
+| items[].platformRef | string \| null | — | — | LinkedIn URN or numeric Facebook Page ID. |
+| items[].avatarUrl | string \| null | — | — | Optional avatar URL. |
+| items[].useCount | integer | — | min 0; max 9007199254740991 | Times this contact was used in a published post. |
+| items[].lastUsedAt | string (date-time) \| null | — | format date-time | When the contact was last used in a published post. |
+| items[].createdAt | string (date-time) | — | format date-time | When the contact was created. |
 | nextCursor | string \| null | — | — | Pass as cursor to get the next page; null when there are no more items. |
 
 #### Example response
@@ -2341,11 +2379,11 @@ curl -X GET "${API_PUBLIC_URL}/api/mentions/search" \
 
 | Field | Type | Required | Default | Constraints | Description |
 | --- | --- | --- | --- | --- | --- |
-| id | string (uuid) | required | — | format uuid | Undocumented — see field name and constraints. |
-| displayName | string | optional | — | min length 1; max length 200 | Undocumented — see field name and constraints. |
-| handle | string \| null | optional | — | max length 100; pattern ^[A-Za-z0-9_.]+$ | Undocumented — see field name and constraints. |
-| platformRef | string \| null | optional | — | max length 300 | Undocumented — see field name and constraints. |
-| avatarUrl | string (uri) \| null | optional | — | format uri | Undocumented — see field name and constraints. |
+| id | string (uuid) | required | — | format uuid | Mention contact ID. |
+| displayName | string | optional | — | min length 1; max length 200 | New label. |
+| handle | string \| null | optional | — | max length 100; pattern ^[A-Za-z0-9_.]+$ | New X/Threads/Instagram username without @; null clears it. |
+| platformRef | string \| null | optional | — | max length 300 | New LinkedIn URN or numeric Facebook Page ID; null clears it. |
+| avatarUrl | string (uri) \| null | optional | — | format uri | New avatar URL; null clears it. |
 
 #### Example request
 
@@ -2362,15 +2400,15 @@ curl -X PATCH "${API_PUBLIC_URL}/api/mentions/00000000-0000-4000-8000-0000000000
 
 | Field | Type | Default | Constraints | Description |
 | --- | --- | --- | --- | --- |
-| id | string (uuid) | — | format uuid | Undocumented — see field name and constraints. |
-| platform | x \| threads \| linkedin \| facebook | — | enum: x, threads, linkedin, facebook | Undocumented — see field name and constraints. |
-| displayName | string | — | — | Undocumented — see field name and constraints. |
-| handle | string \| null | — | — | Undocumented — see field name and constraints. |
-| platformRef | string \| null | — | — | Undocumented — see field name and constraints. |
-| avatarUrl | string \| null | — | — | Undocumented — see field name and constraints. |
-| useCount | integer | — | min 0; max 9007199254740991 | Undocumented — see field name and constraints. |
-| lastUsedAt | string (date-time) \| null | — | format date-time | Undocumented — see field name and constraints. |
-| createdAt | string (date-time) | — | format date-time | Undocumented — see field name and constraints. |
+| id | string (uuid) | — | format uuid | Mention contact ID. |
+| platform | x \| threads \| instagram \| linkedin \| facebook | — | enum: x, threads, instagram, linkedin, facebook | Platform the contact belongs to. |
+| displayName | string | — | — | Label shown in the composer. |
+| handle | string \| null | — | — | X/Threads/Instagram username without @. |
+| platformRef | string \| null | — | — | LinkedIn URN or numeric Facebook Page ID. |
+| avatarUrl | string \| null | — | — | Optional avatar URL. |
+| useCount | integer | — | min 0; max 9007199254740991 | Times this contact was used in a published post. |
+| lastUsedAt | string (date-time) \| null | — | format date-time | When the contact was last used in a published post. |
+| createdAt | string (date-time) | — | format date-time | When the contact was created. |
 
 #### Example response
 
@@ -2585,7 +2623,7 @@ curl -X GET "${API_PUBLIC_URL}/api/platforms/capabilities" \
 
 | Field | Type | Default | Constraints | Description |
 | --- | --- | --- | --- | --- |
-| [].platform | youtube \| x \| linkedin \| threads \| facebook | — | enum: youtube, x, linkedin, threads, facebook | Platform key. |
+| [].platform | youtube \| x \| linkedin \| threads \| facebook \| instagram | — | enum: youtube, x, linkedin, threads, facebook, instagram | Platform key. |
 | [].mentions.supported | boolean | — | — | Whether the composer can insert mention contacts. |
 | [].mentions.kind | handle \| urn \| page \| text_only | — | enum: handle, urn, page, text_only | How the platform represents mentions. |
 | [].mentions.note | string | — | — | Syntax and platform limitations. |
@@ -2620,6 +2658,8 @@ curl -X GET "${API_PUBLIC_URL}/api/platforms/capabilities" \
 | [].mediaRules.maxVideoSeconds | number | — | — | Longest video in seconds. |
 | [].mediaRules.maxImageBytes | number | — | — | Largest image in bytes. |
 | [].mediaRules.shortMaxSeconds | number | — | — | Vertical videos up to this length publish as Shorts. |
+| [].mediaRules.videoMimeTypes | string[] | — | — | Accepted video MIME types (e.g. Instagram: video/mp4, video/quicktime). |
+| [].mediaRules.imageMimeTypes | string[] | — | — | Accepted image MIME types for photos and cover images (Instagram: image/jpeg only). |
 | [].mediaRules.requiresPublicUrl | boolean | — | — | The platform fetches media from a public URL. |
 | [].mediaRules.billed | boolean | — | — | The platform bills API usage for posting. |
 | [].analytics.supported | boolean | — | — | Fannout can read analytics for this platform with the current access. |
@@ -2796,7 +2836,7 @@ curl -X GET "${API_PUBLIC_URL}/api/posts/batches/00000000-0000-4000-8000-0000000
 | counts.pending | number | — | — | Posts not finished yet. |
 | caption | string \| null | — | — | Caption of the first post, for display. |
 | posts[].id | string (uuid) | — | format uuid | Post ID. |
-| posts[].platform | youtube \| x \| linkedin \| threads \| facebook | — | enum: youtube, x, linkedin, threads, facebook | Platform of the post. |
+| posts[].platform | youtube \| x \| linkedin \| threads \| facebook \| instagram | — | enum: youtube, x, linkedin, threads, facebook, instagram | Platform of the post. |
 | posts[].socialConnectionId | string (uuid) | — | format uuid | Account the post goes to. |
 | posts[].account.username | string \| null | — | — | Account handle. |
 | posts[].account.displayName | string \| null | — | — | Account display name. |
@@ -2908,7 +2948,7 @@ curl -X GET "${API_PUBLIC_URL}/api/posts/batches" \
 | items[].counts.pending | number | — | — | Posts not finished yet. |
 | items[].caption | string \| null | — | — | Caption of the first post, for display. |
 | items[].posts[].id | string (uuid) | — | format uuid | Post ID. |
-| items[].posts[].platform | youtube \| x \| linkedin \| threads \| facebook | — | enum: youtube, x, linkedin, threads, facebook | Platform of the post. |
+| items[].posts[].platform | youtube \| x \| linkedin \| threads \| facebook \| instagram | — | enum: youtube, x, linkedin, threads, facebook, instagram | Platform of the post. |
 | items[].posts[].socialConnectionId | string (uuid) | — | format uuid | Account the post goes to. |
 | items[].posts[].account.username | string \| null | — | — | Account handle. |
 | items[].posts[].account.displayName | string \| null | — | — | Account display name. |
@@ -3286,7 +3326,7 @@ curl -X POST "${API_PUBLIC_URL}/api/posts/batches" \
 | --- | --- | --- | --- | --- |
 | batchId | string (uuid) | — | format uuid | Batch ID; poll GET /posts/batches/{batchId}. |
 | posts[].id | string (uuid) | — | format uuid | Post ID. |
-| posts[].platform | youtube \| x \| linkedin \| threads \| facebook | — | enum: youtube, x, linkedin, threads, facebook | Platform of the post. |
+| posts[].platform | youtube \| x \| linkedin \| threads \| facebook \| instagram | — | enum: youtube, x, linkedin, threads, facebook, instagram | Platform of the post. |
 | posts[].socialConnectionId | string (uuid) | — | format uuid | Account the post goes to. |
 | posts[].scheduledAt | string (date-time) \| null | — | format date-time | UTC publish time for scheduled posts; null = publishing now. |
 | replayed | boolean | — | — | True when the idempotency key matched an earlier submit (nothing new was queued). |
@@ -3388,7 +3428,7 @@ curl -X POST "${API_PUBLIC_URL}/api/posts/00000000-0000-4000-8000-000000000000/r
 | --- | --- | --- | --- | --- |
 | batchId | string (uuid) | — | format uuid | Batch ID; poll GET /posts/batches/{batchId}. |
 | posts[].id | string (uuid) | — | format uuid | Post ID. |
-| posts[].platform | youtube \| x \| linkedin \| threads \| facebook | — | enum: youtube, x, linkedin, threads, facebook | Platform of the post. |
+| posts[].platform | youtube \| x \| linkedin \| threads \| facebook \| instagram | — | enum: youtube, x, linkedin, threads, facebook, instagram | Platform of the post. |
 | posts[].socialConnectionId | string (uuid) | — | format uuid | Account the post goes to. |
 | posts[].scheduledAt | string (date-time) \| null | — | format date-time | UTC publish time for scheduled posts; null = publishing now. |
 | replayed | boolean | — | — | True when the idempotency key matched an earlier submit (nothing new was queued). |
@@ -3674,6 +3714,7 @@ curl -X GET "${API_PUBLIC_URL}/api/search" \
 | media[].folderSuggestion | object \| null | — | — | Folder proposed from a social-package JSON; create it with POST /folders/from-suggestion. |
 | media[].error | string \| null | — | — | Why processing failed, when status is failed. |
 | media[].url | string \| null | — | — | Short-lived presigned download URL; null until the upload has finished. |
+| media[].thumbUrl | string \| null | — | — | Short-lived presigned URL of a small (≤ 320 px) JPEG thumbnail; null for non-visual media or when none was generated yet. Prefer it over url for lists and grids. |
 | media[].createdAt | string (date-time) | — | format date-time | When the media was created. |
 | media[].updatedAt | string (date-time) | — | format date-time | When the media last changed. |
 
@@ -3723,6 +3764,7 @@ curl -X GET "${API_PUBLIC_URL}/api/search" \
       },
       "error": "x",
       "url": "x",
+      "thumbUrl": "x",
       "createdAt": "2020-01-01T00:00:00.000Z",
       "updatedAt": "2020-01-01T00:00:00.000Z"
     }
@@ -3744,7 +3786,7 @@ curl -X GET "${API_PUBLIC_URL}/api/search" \
 | --- | --- | --- | --- | --- | --- |
 | cursor | string \| null | optional | — | min length 1; max length 300 | Opaque cursor from the previous page's nextCursor; omit for the first page. |
 | limit | integer | required | 10 | min 1; max 10; default: 10 | Items per page (max 10). |
-| provider | LINKEDIN \| X \| YOUTUBE \| FACEBOOK \| THREADS | optional | — | enum: LINKEDIN, X, YOUTUBE, FACEBOOK, THREADS | Only accounts of this provider. |
+| provider | LINKEDIN \| X \| YOUTUBE \| FACEBOOK \| THREADS \| INSTAGRAM | optional | — | enum: LINKEDIN, X, YOUTUBE, FACEBOOK, THREADS, INSTAGRAM | Only accounts of this provider. |
 
 #### Example request
 
@@ -3760,7 +3802,7 @@ curl -X GET "${API_PUBLIC_URL}/api/social-connections" \
 | --- | --- | --- | --- | --- |
 | items[].id | string (uuid) | — | format uuid | Connection ID; use as socialConnectionId when publishing. |
 | items[].userId | string (uuid) | — | format uuid | Owner's user ID. |
-| items[].provider | string | — | min length 1 | LINKEDIN, X, YOUTUBE, FACEBOOK or THREADS. |
+| items[].provider | string | — | min length 1 | LINKEDIN, X, YOUTUBE, FACEBOOK, THREADS or INSTAGRAM. |
 | items[].providerAccountId | string | — | min length 1 | Account/page/channel ID on the platform. |
 | items[].accountType | string \| null | — | — | Kind of account, e.g. person, organization, page or channel. |
 | items[].username | string \| null | — | — | Account handle. |
@@ -3837,6 +3879,7 @@ curl -X GET "${API_PUBLIC_URL}/api/social-connections/providers" \
 | youtube | boolean | — | — | YouTube can be connected on this server. |
 | facebook | boolean | — | — | Facebook can be connected on this server. |
 | threads | boolean | — | — | Threads can be connected on this server. |
+| instagram | boolean | — | — | Instagram can be connected on this server. |
 
 #### Example response
 
@@ -3846,7 +3889,8 @@ curl -X GET "${API_PUBLIC_URL}/api/social-connections/providers" \
   "x": false,
   "youtube": false,
   "facebook": false,
-  "threads": false
+  "threads": false,
+  "instagram": false
 }
 ```
 

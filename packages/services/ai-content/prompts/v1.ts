@@ -2,7 +2,7 @@ import type { Platform } from "../../publishing/platforms";
 import { limitText, type AiField } from "../model";
 import type { Sources } from "../sources";
 
-export const PROMPT_VERSION = "v3";
+export const PROMPT_VERSION = "v4";
 
 export type PromptTarget = {
   key: string;
@@ -20,6 +20,8 @@ const STYLE: Record<Platform, string> = {
   x: "X — one tight hook, 1–2 hashtags, no links unless they appear in the sources.",
   linkedin: "LinkedIn — a story-style hook, then short lines starting with →, end with a question to invite comments, then 3–5 hashtags.",
   threads: "Threads — conversational, like talking to a friend, at most 1 hashtag.",
+  instagram:
+    "Instagram — a strong first line (the feed shows only ~125 characters before “more”), short paragraphs, 3–8 relevant hashtags at the end (never more than 30), at most 20 @mentions and only accounts that appear in the sources. No links (they are not clickable).",
   facebook: "Facebook — short context, a question to invite comments, then 3–4 hashtags. A video title (if asked) is short and descriptive.",
 };
 

@@ -2,7 +2,7 @@ import type { LucideIcon } from 'lucide-react'
 
 import { providers } from '~/components/connections/providers'
 
-export type AnalyticsPlatform = 'youtube' | 'x' | 'linkedin' | 'threads' | 'facebook'
+export type AnalyticsPlatform = 'youtube' | 'x' | 'linkedin' | 'threads' | 'facebook' | 'instagram'
 
 /** Absent metrics (null/undefined) always render as an em dash — never 0. */
 export const NONE = '—'

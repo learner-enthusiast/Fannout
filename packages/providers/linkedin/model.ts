@@ -897,11 +897,11 @@ export const LINKEDIN_COMMUNITY_COMPOSE: ComposeCapabilities = {
 };
 
 export const LinkedInMentionRangeSchema = z.object({
-  contactId: z.uuid(),
-  start: z.number().int().nonnegative(),
-  length: z.number().int().positive(),
-  displayName: z.string().min(1).max(200),
-  platformRef: z.string().regex(/^urn:li:(person|organization):[^:]+$/),
+  contactId: z.uuid().describe("Mention contact ID (from POST /mentions)."),
+  start: z.number().int().nonnegative().describe("Zero-based start offset of the mention in the final text."),
+  length: z.number().int().positive().describe("Length of the mention text in the final text."),
+  displayName: z.string().min(1).max(200).describe("Name exactly as shown on LinkedIn."),
+  platformRef: z.string().regex(/^urn:li:(person|organization):[^:]+$/).describe("LinkedIn URN: urn:li:person:{id} or urn:li:organization:{id}."),
 });
 
 export const LinkedInComposeInputSchema = z.object({

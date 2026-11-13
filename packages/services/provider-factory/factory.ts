@@ -1,5 +1,6 @@
 import {
   FacebookProvider,
+  InstagramProvider,
   LinkedInProvider,
   ThreadsProvider,
   XProvider,
@@ -19,6 +20,7 @@ export interface ProviderFactoryDeps {
   /** Decrypts the stored token, refreshing it first when it is near expiry. */
   getValidAccessToken(userId: string, connectionId: string): Promise<string>;
   facebook: { appSecret?: string; graphVersion?: string };
+  instagram?: { graphVersion?: string };
   /** Shared provider options (tests inject fetch / sleep). */
   providerOptions?: Omit<BaseProviderConfig, "accessToken">;
 }
@@ -100,6 +102,9 @@ export function createProviderFactory(deps: ProviderFactoryDeps) {
           appSecret: deps.facebook.appSecret,
           version: deps.facebook.graphVersion,
         });
+      case "INSTAGRAM":
+        // The connection is one Instagram professional account; all shared accounts use the same system-user token.
+        return new InstagramProvider({ ...base, igUserId: row.providerAccountId, version: deps.instagram?.graphVersion });
       default:
         throw new AppError({ code: ErrorCode.BAD_REQUEST, message: `Unsupported provider: ${row.provider}` });
     }

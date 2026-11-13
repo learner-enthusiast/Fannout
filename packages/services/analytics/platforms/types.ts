@@ -11,7 +11,14 @@ export type AnalyticsContext = {
 /** One day of account metrics (date = YYYY-MM-DD as the platform buckets it). */
 export type AccountDay = { date: string; metrics: Metrics; raw: Record<string, unknown> };
 
-export type PostRef = { postId: string; externalPostId: string; publishedAt: Date; mediaType: string | null };
+export type PostRef = {
+  postId: string;
+  externalPostId: string;
+  publishedAt: Date;
+  mediaType: string | null;
+  /** Platform post type stored at publish time (Instagram: reel | image | carousel). */
+  postType?: string | null;
+};
 export type PostMetricsResult = { postId: string; metrics: Metrics; raw: Record<string, unknown>; source: string };
 
 /**

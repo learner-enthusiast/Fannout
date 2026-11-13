@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { PostAccountSchema } from "../publishing/model";
 
 export const DeletedBySchema = z.enum(["app", "external"]);
 export const ExternalStatusSchema = z.enum(["live", "hidden", "deleted_externally", "removed_by_platform", "unknown"]);
@@ -62,3 +63,34 @@ export const RepostInputSchema = z.object({
 });
 
 export type FieldIssue = { field: string; message: string };
+
+export const PostDetailSchema = z.object({
+  id: z.uuid().describe("Post ID."),
+  name: z.string().describe("Post display name."),
+  batchId: z.uuid().nullable().describe("Batch the post belongs to."),
+  socialConnectionId: z.uuid().describe("Account the post goes to."),
+  platform: z.string().describe("Platform of the post."),
+  status: z.string().describe("Post state; published, failed, cancelled and deleted are terminal."),
+  externalStatus: z.string().describe("State on the platform: live, hidden, deleted_externally, removed_by_platform or unknown."),
+  editStatus: z.string().nullable().describe("editing while an edit is running, failed when the last edit failed, else null."),
+  postUrl: z.string().nullable().describe("Public URL of the published post."),
+  caption: z.string().nullable().describe("Caption/text of the post."),
+  input: z.record(z.string(), z.unknown()).describe("The compose fields the post was published with."),
+  errorMessage: z.string().nullable().describe("Why the publish failed."),
+  deleteErrorCode: z.string().nullable().describe("Error code when the last delete failed."),
+  deleteErrorMessage: z.string().nullable().describe("Why the last delete failed."),
+  editErrorCode: z.string().nullable().describe("Error code when the last edit failed."),
+  editErrorMessage: z.string().nullable().describe("Why the last edit failed."),
+  publishedAt: z.date().nullable().describe("When the platform accepted the post."),
+  lastEditedAt: z.date().nullable().describe("When the last edit succeeded."),
+  deletedAt: z.date().nullable().describe("When the post was deleted."),
+  revisions: z.array(RevisionSchema).describe("Last 10 edits, newest last."),
+  account: PostAccountSchema,
+  capabilities: z.object({
+    supportsDelete: z.boolean().describe("Whether Fannout can delete this post on the platform."),
+    deleteNote: z.string().describe("Platform note about deletes."),
+    supportsEdit: z.boolean().describe("Whether this post can be edited after publishing."),
+    editableFields: z.array(z.string()).describe("Compose fields PATCH /posts/{postId} accepts."),
+    editNote: z.string().describe("Platform note about edits."),
+  }).describe("What can be done to this post on its platform."),
+});

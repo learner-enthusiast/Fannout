@@ -1,6 +1,7 @@
 import { and, db, desc, eq, inArray, media } from "@repo/database";
 import { errors } from "@repo/errors";
 import { z } from "zod";
+import { invalidate } from "../cache";
 import {
   CreateMediaInputSchema,
   ListMediaInputSchema,
@@ -20,6 +21,7 @@ export async function createMedia(input: CreateMediaInput): Promise<MediaRow> {
   const data = CreateMediaInputSchema.parse(input);
   const [row] = await db.insert(media).values(data).returning();
   if (!row) return errors.internal("Failed to create media");
+  await invalidate(row.userId, "media");
   return MediaRowSchema.parse(row);
 }
 
@@ -76,6 +78,7 @@ export async function updateMedia(
     .where(and(eq(media.id, UuidSchema.parse(id)), eq(media.userId, UuidSchema.parse(userId))))
     .returning();
   if (!row) return errors.notFound("Media");
+  await invalidate(row.userId, "media");
   return MediaRowSchema.parse(row);
 }
 
@@ -93,6 +96,8 @@ export async function deleteMedia(userId: string, id: string): Promise<MediaRow>
     .where(and(eq(media.id, UuidSchema.parse(id)), eq(media.userId, UuidSchema.parse(userId))))
     .returning();
   if (!row) return errors.notFound("Media");
+  // Folder links cascade and post attachments go too, so folders and posts are stale as well.
+  await invalidate(row.userId, "media", "posts");
   // Returned so the caller can remove the S3 object.
   return MediaRowSchema.parse(row);
 }

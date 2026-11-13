@@ -1,6 +1,7 @@
 import { and, db, desc, eq, ilike, media, or, sql, type AnyColumn } from "@repo/database";
 import { getDownloadUrl } from "@repo/s3";
 import { z } from "zod";
+import { cached } from "../cache";
 import { afterCursor, cursorTimestamp, toPage } from "../lib/cursor";
 import {
   MediaListInputSchema,
@@ -17,6 +18,13 @@ const VIEWABLE = new Set(["uploaded", "processing", "ready"]);
 export async function presignedUrl(row: Pick<MediaRow, "status" | "s3Key" | "s3Bucket">) {
   if (!VIEWABLE.has(row.status)) return null;
   return getDownloadUrl(row.s3Key, { bucket: row.s3Bucket });
+}
+
+/** Small JPEG for lists/grids; null when none exists yet (older media, non-visual types). */
+export async function presignedThumbUrl(row: Pick<MediaRow, "status" | "s3Bucket" | "metadata">) {
+  const key = row.metadata?.thumbnailKey;
+  if (!key || !VIEWABLE.has(row.status)) return null;
+  return getDownloadUrl(key, { bucket: row.s3Bucket });
 }
 
 export async function toMediaView(row: MediaRow): Promise<MediaView> {
@@ -40,6 +48,7 @@ export async function toMediaView(row: MediaRow): Promise<MediaView> {
     folderSuggestion: meta.folderSuggestion ?? null,
     error: meta.error ?? null,
     url: await presignedUrl(row),
+    thumbUrl: await presignedThumbUrl(row),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -59,8 +68,25 @@ export function nameMatches(column: AnyColumn, q: string) {
 }
 
 /** Cursor-paginated library, newest first (created_at DESC, id DESC). */
+/** What goes into Redis: rows only (no presigned URLs, no upload state). URLs are signed after the read. */
+const MediaRowsPageSchema = z.object({ items: z.array(MediaRowSchema), nextCursor: z.string().nullable() });
+
+/** Group "media". Presigned URLs are NEVER cached: the page of rows is, and `toMediaView` signs per read. */
 export async function listMediaPage(userId: string, input: MediaListInput): Promise<MediaPage> {
-  const { q, type, orientation, cursor, limit } = MediaListInputSchema.parse(input);
+  const parsed = MediaListInputSchema.parse(input);
+  const { q, type, orientation, cursor, limit } = parsed;
+  const page = await cached({
+    userId,
+    group: "media",
+    key: "listMediaPage",
+    input: { q: q ?? null, type: type ?? null, orientation: orientation ?? null, cursor: cursor ?? null, limit },
+    schema: MediaRowsPageSchema,
+    load: () => loadMediaRows(userId, parsed),
+  });
+  return { items: await Promise.all(page.items.map((row) => toMediaView(row))), nextCursor: page.nextCursor };
+}
+
+async function loadMediaRows(userId: string, { q, type, orientation, cursor, limit }: z.output<typeof MediaListInputSchema>) {
   const rows = await db
     .select({ row: media, cursorTs: cursorTimestamp(media.createdAt) })
     .from(media)
@@ -81,7 +107,14 @@ export async function listMediaPage(userId: string, input: MediaListInput): Prom
     limit,
   );
   return {
-    items: await Promise.all(page.items.map((item) => toMediaView(item.row))),
+    items: page.items.map(({ row }) => cacheableMediaRow(row)),
     nextCursor: page.nextCursor,
   };
+}
+
+/** A media row that is safe to keep in Redis: `multipart` (the S3 upload id) is upload state and is dropped. */
+export function cacheableMediaRow(row: MediaRow): MediaRow {
+  if (!row.metadata) return row;
+  const { multipart: _multipart, ...metadata } = row.metadata;
+  return { ...row, metadata };
 }

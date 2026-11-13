@@ -1,9 +1,11 @@
 import { and, count, db, desc, eq, inArray, isNotNull, isNull, lt, notifications } from "@repo/database";
 import { z } from "zod";
+import { cached, invalidate } from "../cache";
 import { afterCursor, cursorTimestamp, toPage } from "../lib/cursor";
 import {
   CreateNotificationInputSchema,
   ListNotificationsInputSchema,
+  NotificationPageSchema,
   NotificationViewSchema,
   type CreateNotificationInput,
   type ListNotificationsInput,
@@ -55,7 +57,9 @@ export async function createNotification(
     if (!isForeignKeyViolation(error)) throw error;
     rows = await insert({ ...values, mediaId: null, postId: null });
   }
-  return rows[0] ? NotificationViewSchema.parse(rows[0]) : null;
+  if (!rows[0]) return null;
+  await invalidate(data.userId, "notifications");
+  return NotificationViewSchema.parse(rows[0]);
 }
 
 export async function listNotifications(
@@ -63,6 +67,20 @@ export async function listNotifications(
   input: ListNotificationsInput = {},
 ): Promise<NotificationPage> {
   const { cursor, limit, unreadOnly } = ListNotificationsInputSchema.parse(input);
+  return cached({
+    userId,
+    group: "notifications",
+    key: "listNotifications",
+    input: { cursor: cursor ?? null, limit, unreadOnly: Boolean(unreadOnly) },
+    schema: NotificationPageSchema,
+    load: () => loadNotifications(userId, { cursor, limit, unreadOnly }),
+  });
+}
+
+async function loadNotifications(
+  userId: string,
+  { cursor, limit, unreadOnly }: { cursor?: string | null; limit: number; unreadOnly?: boolean },
+): Promise<NotificationPage> {
   const rows = await db
     .select({ row: notifications, cursorTs: cursorTimestamp(notifications.createdAt) })
     .from(notifications)
@@ -87,6 +105,16 @@ export async function listNotifications(
 }
 
 export async function countUnreadNotifications(userId: string): Promise<number> {
+  return cached({
+    userId,
+    group: "notifications",
+    key: "countUnreadNotifications",
+    schema: z.number().int().nonnegative(),
+    load: () => loadUnreadCount(userId),
+  });
+}
+
+async function loadUnreadCount(userId: string): Promise<number> {
   const [row] = await db
     .select({ value: count() })
     .from(notifications)
@@ -107,6 +135,7 @@ export async function markNotificationsRead(userId: string, ids: string[]): Prom
       ),
     )
     .returning({ id: notifications.id });
+  if (rows.length) await invalidate(userId, "notifications");
   return rows.length;
 }
 
@@ -116,6 +145,7 @@ export async function markAllNotificationsRead(userId: string): Promise<number> 
     .set({ readAt: new Date() })
     .where(and(eq(notifications.userId, UuidSchema.parse(userId)), isNull(notifications.readAt)))
     .returning({ id: notifications.id });
+  if (rows.length) await invalidate(userId, "notifications");
   return rows.length;
 }
 
@@ -124,6 +154,7 @@ export async function pruneReadNotifications(before: Date): Promise<number> {
   const rows = await db
     .delete(notifications)
     .where(and(isNotNull(notifications.readAt), lt(notifications.createdAt, before)))
-    .returning({ id: notifications.id });
+    .returning({ id: notifications.id, userId: notifications.userId });
+  for (const userId of new Set(rows.map((row) => row.userId))) await invalidate(userId, "notifications");
   return rows.length;
 }

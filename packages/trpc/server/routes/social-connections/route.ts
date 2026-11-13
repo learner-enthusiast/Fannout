@@ -17,13 +17,14 @@ const ProvidersAvailabilitySchema = z.object({
   youtube: z.boolean().describe("YouTube can be connected on this server."),
   facebook: z.boolean().describe("Facebook can be connected on this server."),
   threads: z.boolean().describe("Threads can be connected on this server."),
+  instagram: z.boolean().describe("Instagram can be connected on this server."),
 });
 
 export const socialConnectionsRouter = router({
   /** Connected accounts, 10 at a time (newest first). */
   list: scoped("connections:read")
     .meta({ openapi: { method: "GET", path: "/social-connections", summary: "List connected social accounts", protect: true } })
-    .input(PaginationInputSchema.extend({ provider: z.enum(["LINKEDIN", "X", "YOUTUBE", "FACEBOOK", "THREADS"]).optional().describe("Only accounts of this provider.") }))
+    .input(PaginationInputSchema.extend({ provider: z.enum(["LINKEDIN", "X", "YOUTUBE", "FACEBOOK", "THREADS", "INSTAGRAM"]).optional().describe("Only accounts of this provider.") }))
     .output(paginatedOutput(SocialConnectionViewSchema))
     .query(({ ctx, input }) => listSocialConnectionsPage(ctx.dbUserId, input)),
 

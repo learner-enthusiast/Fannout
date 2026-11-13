@@ -95,6 +95,11 @@ export function NotificationBell() {
     const notificationsQuery = trpc.notifications.list.useInfiniteQuery({}, infiniteOptions({ enabled: open, staleTime: 0 }))
     const list = useInfiniteList(notificationsQuery)
 
+    // Prefetch on intent so the popup opens with data instead of a spinner.
+    const prefetch = () => {
+        void utils.notifications.list.prefetchInfinite({}, { staleTime: 10_000 })
+    }
+
     const refresh = () => {
         void utils.notifications.unreadCount.invalidate()
         void utils.notifications.list.invalidate()
@@ -120,6 +125,8 @@ export function NotificationBell() {
                         size="icon"
                         aria-label={count ? `Notifications, ${count} unread` : 'Notifications'}
                         className="relative"
+                        onPointerEnter={prefetch}
+                        onFocus={prefetch}
                     />
                 }
             >

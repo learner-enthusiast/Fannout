@@ -1,6 +1,7 @@
 import { and, asc, db, eq, inArray, max, media, postMedia, posts } from "@repo/database";
 import { errors } from "@repo/errors";
 import { z } from "zod";
+import { invalidate } from "../cache";
 import {
   AddPostMediaInputSchema,
   PostMediaRowSchema,
@@ -70,6 +71,7 @@ export async function addMediaToPost(
     .onConflictDoNothing({ target: [postMedia.postId, postMedia.mediaId] })
     .returning();
   if (!row) return errors.conflict("Media is already attached to this post");
+  await invalidate(parsedUserId, "posts");
   return PostMediaRowSchema.parse(row);
 }
 
@@ -154,4 +156,5 @@ export async function removeMediaFromPost(userId: string, id: string): Promise<v
     return;
   }
   await db.delete(postMedia).where(eq(postMedia.id, parsedId));
+  await invalidate(UuidSchema.parse(userId), "posts");
 }

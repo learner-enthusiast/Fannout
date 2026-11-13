@@ -1,0 +1,12 @@
+node_modules/
+dist/
+build/
+.next/
+.turbo/
+coverage/
+# generated migrations
+packages/database/drizzle/
+*.lock
+pnpm-lock.yaml
+*.map
+graphify-out/

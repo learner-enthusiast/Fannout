@@ -1,4 +1,5 @@
 import { FACEBOOK_COMPOSE, FacebookComposeInputSchema } from "@repo/providers/facebook";
+import { INSTAGRAM_COMPOSE, InstagramComposeInputSchema } from "@repo/providers/instagram";
 import { LINKEDIN_COMMUNITY_COMPOSE, LINKEDIN_COMPOSE, LinkedInComposeInputSchema } from "@repo/providers/linkedin";
 import { THREADS_COMPOSE, ThreadsComposeInputSchema } from "@repo/providers/threads";
 import { X_COMPOSE, XComposeInputSchema } from "@repo/providers/x";
@@ -10,9 +11,9 @@ import { env } from "../env";
 /**
  * Composer platforms. Schemas and capabilities live in each provider's
  * model.ts (single source of truth); this only maps connection providers
- * to them. Instagram has no provider yet, so it isn't listed.
+ * to them.
  */
-export const PlatformSchema = z.enum(["youtube", "x", "linkedin", "threads", "facebook"]);
+export const PlatformSchema = z.enum(["youtube", "x", "linkedin", "threads", "facebook", "instagram"]);
 export type Platform = z.infer<typeof PlatformSchema>;
 
 export type PlatformDefinition = {
@@ -36,6 +37,7 @@ export const PLATFORMS: Record<Platform, PlatformDefinition> = {
     captionField: "commentary",
   },
   threads: { platform: "threads", label: "Threads", schema: ThreadsComposeInputSchema, capabilities: THREADS_COMPOSE, captionField: "text" },
+  instagram: { platform: "instagram", label: "Instagram", schema: InstagramComposeInputSchema, capabilities: INSTAGRAM_COMPOSE, captionField: "caption" },
   facebook: { platform: "facebook", label: "Facebook", schema: FacebookComposeInputSchema, capabilities: FACEBOOK_COMPOSE, captionField: "message" },
 };
 

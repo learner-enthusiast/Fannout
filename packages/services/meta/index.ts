@@ -20,7 +20,9 @@ import { logger } from "@repo/logger";
 import { z } from "zod";
 import { env } from "../env";
 import type { NotificationType } from "../notifications/model";
+import { invalidate } from "../cache";
 import { cancelSchedule, type SchedulingEffects } from "../scheduling";
+import { invalidateConnection } from "../social-connections";
 
 /**
  * Meta app-removal and data-deletion callbacks (Facebook + Threads).
@@ -179,6 +181,9 @@ export async function handleDeauthorize(provider: MetaProvider, platformUserId: 
       })
       .where(eq(socialConnections.id, conn.id));
     postsCancelled += await cancelPendingPosts(conn.id, conn.userId, effects);
+    // Committed above: connection + the posts we cancelled + analytics for it.
+    await invalidateConnection(conn.userId, conn.id);
+    await invalidate(conn.userId, "posts");
   }
   // One notification per Fannout user (a Facebook user may have connected several Pages).
   for (const userId of new Set(matches.map((m) => m.userId))) {
@@ -270,6 +275,8 @@ export async function runDataDeletion(requestId: string, effects: MetaEffects) {
       })
       .where(eq(socialConnections.id, conn.id));
     summary.connections += 1;
+    await invalidateConnection(conn.userId, conn.id);
+    await invalidate(conn.userId, "posts");
   }
 
   await db.update(dataDeletionRequests).set({ status: "completed", completedAt: new Date(), summary }).where(eq(dataDeletionRequests.id, request.id));

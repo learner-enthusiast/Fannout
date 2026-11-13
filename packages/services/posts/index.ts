@@ -1,6 +1,7 @@
 import { and, asc, db, desc, eq, media, postMedia, posts, socialConnections } from "@repo/database";
 import { errors } from "@repo/errors";
 import { z } from "zod";
+import { invalidate } from "../cache";
 import {
   CreatePostInputSchema,
   ListPostsInputSchema,
@@ -43,6 +44,7 @@ export async function createPost(input: CreatePostInput): Promise<PostRow> {
   await assertSocialConnectionOwned(data.userId, data.socialConnectionId);
   const [row] = await db.insert(posts).values(data).returning();
   if (!row) return errors.internal("Failed to create post");
+  await invalidate(row.userId, "posts");
   return PostRowSchema.parse(row);
 }
 
@@ -117,6 +119,7 @@ export async function updatePost(
     .where(and(eq(posts.id, parsedId), eq(posts.userId, parsedUserId)))
     .returning();
   if (!row) return errors.notFound("Post");
+  await invalidate(parsedUserId, "posts");
   return PostRowSchema.parse(row);
 }
 
@@ -146,6 +149,7 @@ export async function markPostPublished(
     .where(and(eq(posts.id, UuidSchema.parse(id)), eq(posts.userId, UuidSchema.parse(userId))))
     .returning();
   if (!row) return errors.notFound("Post");
+  await invalidate(row.userId, "posts");
   return PostRowSchema.parse(row);
 }
 
@@ -155,4 +159,5 @@ export async function deletePost(userId: string, id: string): Promise<void> {
     .where(and(eq(posts.id, UuidSchema.parse(id)), eq(posts.userId, UuidSchema.parse(userId))))
     .returning({ id: posts.id });
   if (!row) errors.notFound("Post");
+  await invalidate(userId, "posts");
 }

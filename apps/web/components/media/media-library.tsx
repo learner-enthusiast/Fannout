@@ -71,7 +71,7 @@ function MediaTile({
                 className="outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 aria-label={`Open ${item.name}`}
             >
-                <MediaPreview type={item.type} url={item.url} alt={item.name} />
+                <MediaPreview type={item.type} url={item.url} thumbUrl={item.thumbUrl} alt={item.name} />
             </Link>
             <span className={cardMenuSlot}>
                 <CardMenu label={item.name} disabled={deleting} onDelete={onDelete} />

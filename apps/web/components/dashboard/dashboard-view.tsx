@@ -237,7 +237,16 @@ function Toolbar({
 
 function ConnectionEmpty({ connection }: { connection: SyncConnection }) {
     if (connection.status === 'unsupported') {
-        return <EmptyState icon={UnplugIcon} title="No analytics for this account" description="Analytics aren't available with the current LinkedIn access." />
+        return (
+            <EmptyState
+                icon={UnplugIcon}
+                title="No analytics for this account"
+                description={
+                    connection.note ??
+                    `Analytics aren't available for ${platformMeta(connection.platform).label} with the current access.`
+                }
+            />
+        )
     }
     if (connection.status === 'needs_reconnect') {
         return (

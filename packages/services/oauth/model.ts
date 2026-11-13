@@ -3,11 +3,11 @@ import { z } from "zod";
 // ---------- providers ----------
 
 /** URL segment used by /api/oauth/:provider/... */
-export const OAuthProviderSlugSchema = z.enum(["linkedin", "x", "youtube", "facebook", "threads"]);
+export const OAuthProviderSlugSchema = z.enum(["linkedin", "x", "youtube", "facebook", "threads", "instagram"]);
 export type OAuthProviderSlug = z.infer<typeof OAuthProviderSlugSchema>;
 
 /** Value stored in social_connections.provider. */
-export const SocialProviderSchema = z.enum(["LINKEDIN", "X", "YOUTUBE", "FACEBOOK", "THREADS"]);
+export const SocialProviderSchema = z.enum(["LINKEDIN", "X", "YOUTUBE", "FACEBOOK", "THREADS", "INSTAGRAM"]);
 export type SocialProvider = z.infer<typeof SocialProviderSchema>;
 
 export const PROVIDER_BY_SLUG = {
@@ -16,6 +16,7 @@ export const PROVIDER_BY_SLUG = {
   youtube: "YOUTUBE",
   facebook: "FACEBOOK",
   threads: "THREADS",
+  instagram: "INSTAGRAM",
 } as const satisfies Record<OAuthProviderSlug, SocialProvider>;
 
 // ---------- redirect safety ----------

@@ -8,6 +8,7 @@ import {
   YouTubeProvider,
   type AnySocialProvider,
 } from "@repo/providers";
+import { invalidate } from "../cache";
 import { env } from "../env";
 import { omit } from "../lib/omit";
 import { MediaRowSchema } from "../media/model";
@@ -61,10 +62,12 @@ async function deleteOnPlatform(provider: AnySocialProvider, externalId: string)
 
 export async function markDeleteFailed(postId: string, code: string, message: string) {
   // Back to published: the post is still live on the platform.
-  await db
+  const [row] = await db
     .update(posts)
     .set({ status: "published", deleteErrorCode: code, deleteErrorMessage: message.slice(0, 500), updatedAt: new Date() })
-    .where(and(eq(posts.id, postId), eq(posts.status, "deleting")));
+    .where(and(eq(posts.id, postId), eq(posts.status, "deleting")))
+    .returning({ userId: posts.userId });
+  if (row) await invalidate(row.userId, "posts");
 }
 
 /**
@@ -112,6 +115,7 @@ export async function runDeletePost(postId: string, deps: ActionDeps = {}): Prom
       updatedAt: new Date(),
     })
     .where(and(eq(posts.id, post.id), eq(posts.status, "deleting")));
+  await invalidate(post.userId, "posts");
   return { outcome: "deleted" };
 }
 
@@ -123,10 +127,13 @@ type PendingEdit = { merged: Record<string, unknown>; changed: Record<string, un
 
 export async function markEditFailed(postId: string, code: string, message: string, extra: Partial<typeof posts.$inferInsert> = {}) {
   // pendingEdit stays in config for Retry; the live values are untouched.
-  await db
+  const [row] = await db
     .update(posts)
     .set({ editStatus: "failed", editErrorCode: code, editErrorMessage: message.slice(0, 500), ...extra, updatedAt: new Date() })
-    .where(eq(posts.id, postId));
+    .where(eq(posts.id, postId))
+    .returning({ userId: posts.userId });
+  // Also covers "found externally deleted" (extra.externalStatus).
+  if (row) await invalidate(row.userId, "posts");
 }
 
 async function editYouTube(provider: YouTubeProvider, videoId: string, edit: PendingEdit, userId: string) {
@@ -228,6 +235,7 @@ export async function runEditPost(postId: string, deps: ActionDeps = {}): Promis
       updatedAt: new Date(),
     })
     .where(eq(posts.id, post.id));
+  await invalidate(post.userId, "posts");
   return { outcome: "edited" };
 }
 

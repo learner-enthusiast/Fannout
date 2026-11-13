@@ -107,6 +107,7 @@ export const FolderItemViewSchema = z.object({
     width: z.number().nullable().describe("Pixel width."),
     height: z.number().nullable().describe("Pixel height."),
     previewUrl: z.string().nullable().describe("Short-lived presigned URL for previewing the media."),
+    thumbUrl: z.string().nullable().describe("Short-lived presigned URL of a small (≤ 320 px) JPEG thumbnail; null when none exists. Prefer it over previewUrl in grids."),
   }).describe("The media item."),
 });
 export type FolderItemView = z.infer<typeof FolderItemViewSchema>;

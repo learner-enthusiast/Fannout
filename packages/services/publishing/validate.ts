@@ -30,6 +30,8 @@ export type ValidatedTarget = {
 const MB = 1024 * 1024;
 const size = (bytes: number) => (bytes >= 1024 * MB ? `${Math.round(bytes / (1024 * MB))} GB` : `${Math.round(bytes / MB)} MB`);
 
+const mimeLabel = (mime: string) => (mime === "image/jpeg" ? "JPEG" : mime === "video/mp4" ? "MP4" : mime === "video/quicktime" ? "MOV" : mime);
+
 function mediaIssues(
   platform: Platform,
   mediaType: ComposeMediaType,
@@ -52,6 +54,9 @@ function mediaIssues(
       if (rules.maxVideoBytes && (video.sizeBytes ?? 0) > rules.maxVideoBytes) {
         issues.push({ field: "media", message: `${label} videos can be at most ${size(rules.maxVideoBytes)}` });
       }
+      if (rules.videoMimeTypes && !rules.videoMimeTypes.includes(video.mimeType)) {
+        issues.push({ field: "media", message: `${label} accepts ${rules.videoMimeTypes.map(mimeLabel).join(" or ")} videos only` });
+      }
       const seconds = video.durationSeconds ?? null;
       if (seconds !== null && rules.maxVideoSeconds && seconds > rules.maxVideoSeconds) {
         issues.push({ field: "media", message: `${label} videos can be at most ${Math.round(rules.maxVideoSeconds / 60)} min long` });
@@ -64,6 +69,14 @@ function mediaIssues(
       if (!cap.supportsThumbnail) issues.push({ field: "thumbnail", message: `${label} doesn't take a custom thumbnail` });
       else if (!thumbnail || thumbnail.type !== "image") issues.push({ field: "thumbnail", message: "The thumbnail must be one of your images" });
       else if (thumbnail.status !== "ready") issues.push({ field: "thumbnail", message: "The thumbnail isn't ready yet" });
+      else {
+        if (rules.imageMimeTypes && !rules.imageMimeTypes.includes(thumbnail.mimeType)) {
+          issues.push({ field: "thumbnail", message: `${label} accepts ${rules.imageMimeTypes.map(mimeLabel).join(" or ")} cover images only` });
+        }
+        if (rules.maxImageBytes && (thumbnail.sizeBytes ?? 0) > rules.maxImageBytes) {
+          issues.push({ field: "thumbnail", message: `${label} cover images can be at most ${size(rules.maxImageBytes)}` });
+        }
+      }
     }
     return issues;
   }
@@ -76,6 +89,9 @@ function mediaIssues(
   }
   if (media.length < Math.max(1, cap.minCarousel)) {
     issues.push({ field: "media", message: `${label} needs at least ${Math.max(1, cap.minCarousel)} photo${cap.minCarousel > 1 ? "s" : ""}` });
+  }
+  if (rules.imageMimeTypes && media.some((m) => !rules.imageMimeTypes!.includes(m.mimeType))) {
+    issues.push({ field: "media", message: `${label} accepts ${rules.imageMimeTypes.map(mimeLabel).join(" or ")} images only` });
   }
   if (rules.maxImageBytes) {
     const big = media.filter((m) => (m.sizeBytes ?? 0) > rules.maxImageBytes!);

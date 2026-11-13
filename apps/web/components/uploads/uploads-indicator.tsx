@@ -12,13 +12,15 @@ import {
 } from '~/components/ui/popover'
 
 import { UploadList } from './upload-list'
-import { useUploads } from './upload-provider'
+import { useUploadActions, useUploadActiveCount, useUploadCount } from './upload-provider'
 
 /** Header button with active-upload count; hidden when there are no uploads. */
 export function UploadsIndicator() {
-    const { items, activeCount, clearFinished } = useUploads()
-    if (items.length === 0) return null
-    const finished = items.length - activeCount
+    const total = useUploadCount()
+    const activeCount = useUploadActiveCount()
+    const { clearFinished } = useUploadActions()
+    if (total === 0) return null
+    const finished = total - activeCount
 
     return (
         <Popover>

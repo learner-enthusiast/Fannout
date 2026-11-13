@@ -2,14 +2,16 @@ import { and, asc, db, eq, inArray, isNull, media, postMedia, posts, socialConne
 import { AppError } from "@repo/errors";
 import {
   FacebookProvider,
+  InstagramProvider,
   LinkedInProvider,
   ProviderError,
   ThreadsProvider,
   XProvider,
   YouTubeProvider,
 } from "@repo/providers";
-import { ZodError } from "zod";
+import { z, ZodError } from "zod";
 import { MediaRowSchema, type MediaRow } from "../media/model";
+import { cached, invalidate } from "../cache";
 import { createProviderForConnection } from "../provider-factory";
 import { SocialConnectionRowSchema } from "../social-connections/model";
 import { updateSocialConnection } from "../social-connections";
@@ -20,6 +22,7 @@ import { failSchedule } from "../scheduling";
 import { recordMentionsUsed } from "../mentions";
 import { FacebookPublishError, MISSING_VIDEO_PERMISSION_MESSAGE, facebookPublisher } from "./publishers/facebook";
 import { LINKEDIN_MISSING_SHARE_MESSAGE, LinkedInPublishError, linkedinPublisher } from "./publishers/linkedin";
+import { INSTAGRAM_NEW_CONTAINER_SUBCODES, instagramPublisher, instagramSubcode } from "./publishers/instagram";
 import { threadsPublisher } from "./publishers/threads";
 import type { PublishContext, PublishOutcome, Publisher } from "./publishers/types";
 import type { PrepareStep } from "./upload/progress";
@@ -66,6 +69,53 @@ function classifyXError(error: ProviderError): { kind: ErrorKind; code: string; 
   return { kind: "permanent", code: error.code, message: `X rejected this request: ${detail}` };
 }
 
+const INSTAGRAM_TRANSIENT = new Set(["2207001", "2207003", "2207027", "2207032", "2207053"]);
+const INSTAGRAM_VALIDATION: Record<string, string> = {
+  "2207004": "The image is too large for Instagram (max 8 MB).",
+  "2207005": "Instagram accepts JPEG images only.",
+  "2207009": "Instagram doesn't support this aspect ratio. Try a different crop.",
+  "2207010": "The caption is too long for Instagram (max 2,200 characters).",
+  "2207026": "Instagram doesn't support this video format. Use MP4 with H.264 video and AAC audio.",
+  "2207028": "A carousel needs 2 to 20 photos.",
+  "2207040": "This post has too many tags or mentions for Instagram.",
+  "2207052": "Instagram couldn't download the media from its link. Check that storage is reachable from the internet, then retry.",
+  "2207057": "The cover frame (ms) is outside the video. Pick an earlier time or a cover image.",
+};
+
+/** Instagram (Graph API) error codes and subcodes → existing classes. Anything else falls through to the generic rules. */
+function classifyInstagramError(error: ProviderError): { kind: ErrorKind; code: string; message: string } | null {
+  if (error.provider !== "INSTAGRAM") return null;
+  const sub = instagramSubcode(error);
+  if (sub) {
+    if (INSTAGRAM_TRANSIENT.has(sub)) return { kind: "transient", code: `instagram_${sub}`, message: error.message };
+    if (INSTAGRAM_NEW_CONTAINER_SUBCODES.has(sub)) {
+      return { kind: "permanent", code: "instagram_new_container_needed", message: "Instagram needs a fresh media container. Retry the post." };
+    }
+    if (sub === "2207042") {
+      return { kind: "transient", code: "RATE_LIMITED", message: "Instagram's 24-hour publishing limit is reached. Try again later." };
+    }
+    if (sub === "2207050" || sub === "2207051") {
+      return {
+        kind: "permanent",
+        code: "instagram_account_restricted",
+        message: "Instagram restricted this account from posting. Check the Instagram app, then try again later.",
+      };
+    }
+    const validation = INSTAGRAM_VALIDATION[sub];
+    if (validation) return { kind: "permanent", code: "VALIDATION", message: validation };
+  }
+  const body = providerBody(error);
+  // Code 190 / OAuthException: the user removed the app or moved the account to another portfolio. Never retried.
+  if (/^190\b/.test(error.providerCode ?? "") || /OAuthException|error validating access token/i.test(body)) {
+    return { kind: "auth", code: "instagram_token_invalid", message: "Instagram access was removed. Reconnect Instagram and share the account again." };
+  }
+  // "(#10) … permission" or "account type is not business or creator".
+  if (/\(#10\)|does not have permission|not.{0,20}(business|creator)/i.test(body)) {
+    return { kind: "auth", code: "instagram_missing_permission", message: "Instagram needs more permissions or a Business/Creator account. Reconnect Instagram." };
+  }
+  return null;
+}
+
 /** Auth → reconnect + fail; permanent (validation, bad request…) → fail; else retry. */
 export function classifyPublishError(error: unknown): { kind: ErrorKind; code: string; message: string } {
   const message = (error instanceof Error && error.message ? error.message : "Publishing failed").slice(0, 500);
@@ -75,6 +125,8 @@ export function classifyPublishError(error: unknown): { kind: ErrorKind; code: s
   if (error instanceof ProviderError) {
     const x = classifyXError(error);
     if (x) return x;
+    const instagram = classifyInstagramError(error);
+    if (instagram) return instagram;
     // "(#100) No permission to publish the video" (also #200 publish_video): permission, not a glitch.
     if (error.provider === "FACEBOOK" && /permission to publish the video|publish_video/i.test(error.message)) {
       return { kind: "permanent", code: "missing_video_permission", message: MISSING_VIDEO_PERMISSION_MESSAGE };
@@ -140,14 +192,17 @@ export async function claimPost(postId: string, scheduleVersion?: number | null)
       ),
     )
     .returning({ id: posts.id, batchId: posts.batchId, userId: posts.userId, socialConnectionId: posts.socialConnectionId });
+  if (row) await invalidate(row.userId, "posts");
   return row ?? null;
 }
 
 export async function markPostFailed(postId: string, code: string, message: string) {
-  await db
+  const [failed] = await db
     .update(posts)
     .set({ status: "failed", errorCode: code, errorMessage: message.slice(0, 500), updatedAt: new Date() })
-    .where(eq(posts.id, postId));
+    .where(eq(posts.id, postId))
+    .returning({ userId: posts.userId });
+  if (failed) await invalidate(failed.userId, "posts");
   await saveConfigProgress(postId, {}, "Failed");
   await failSchedule(postId, message);
 }
@@ -158,8 +213,9 @@ export async function setPostStep(postId: string, step: string) {
 }
 
 /** Mirrors toSocialConnectionView: no token → "reconnect required". */
-export async function markNeedsReconnect(userId: string, connectionId: string) {
+export async function markNeedsReconnect(userId: string, connectionId: string, options: { deactivate?: boolean } = {}) {
   await updateSocialConnection(userId, connectionId, {
+    ...(options.deactivate ? { isActive: false } : {}),
     accessTokenEncrypted: null,
     refreshTokenEncrypted: null,
     accessExpiry: null,
@@ -192,6 +248,7 @@ function publisherFor(provider: unknown): { run: (phase: PublishPhase, ctx: Publ
   if (provider instanceof LinkedInProvider) return wrap(linkedinPublisher, provider);
   if (provider instanceof ThreadsProvider) return wrap(threadsPublisher, provider);
   if (provider instanceof FacebookProvider) return wrap(facebookPublisher, provider);
+  if (provider instanceof InstagramProvider) return wrap(instagramPublisher, provider);
   return null;
 }
 
@@ -258,6 +315,7 @@ export async function runPublishPhase(postId: string, phase: PublishPhase, optio
         updatedAt: new Date(),
       })
       .where(eq(posts.id, post.id));
+    await invalidate(post.userId, "posts");
     await saveConfigProgress(post.id, {}, "Published");
     // Mention counters are ancillary; never turn an already-live post into a failure.
     await recordMentionsUsed(post.userId, config.platform, input).catch(() => undefined);
@@ -272,7 +330,8 @@ export async function runPublishPhase(postId: string, phase: PublishPhase, optio
       await saveConfigProgress(post.id, {}, `Retrying: ${message.slice(0, 120)}`);
       throw error;
     }
-    if (kind === "auth") await markNeedsReconnect(post.userId, post.socialConnectionId);
+    // Instagram code 190: the grant is gone for good, so the connection is switched off too.
+    if (kind === "auth") await markNeedsReconnect(post.userId, post.socialConnectionId, { deactivate: code === "instagram_token_invalid" });
     await markPostFailed(post.id, code, kind === "auth" ? `Reconnect this account: ${message}` : message);
     throw new PermanentPublishError(code, message);
   }
@@ -322,18 +381,38 @@ async function youtubeFor(userId: string, connectionId: string) {
   return provider;
 }
 
+const TitledItemsSchema = z.array(z.object({ id: z.string(), title: z.string() }));
+
+/** Group `platform:{connectionId}`: data that lives on YouTube; dropped when the connection changes. */
 export async function listYouTubePlaylists(userId: string, connectionId: string) {
-  const youtube = await youtubeFor(userId, connectionId);
-  const result = await youtube.listPlaylist({ part: ["snippet"], mine: true, maxResults: 50 });
-  return (result.items ?? [])
-    .filter((item) => item.id)
-    .map((item) => ({ id: item.id!, title: item.snippet?.title ?? "Untitled playlist" }));
+  return cached({
+    userId,
+    group: `platform:${connectionId}`,
+    key: "listYouTubePlaylists",
+    schema: TitledItemsSchema,
+    load: async () => {
+      const youtube = await youtubeFor(userId, connectionId);
+      const result = await youtube.listPlaylist({ part: ["snippet"], mine: true, maxResults: 50 });
+      return (result.items ?? [])
+        .filter((item) => item.id)
+        .map((item) => ({ id: item.id!, title: item.snippet?.title ?? "Untitled playlist" }));
+    },
+  });
 }
 
 export async function listYouTubeCategories(userId: string, connectionId: string, regionCode = "US") {
-  const youtube = await youtubeFor(userId, connectionId);
-  const result = await youtube.listVideoCategories({ part: ["snippet"], regionCode });
-  return (result.items ?? [])
-    .filter((item) => item.id && item.snippet?.assignable)
-    .map((item) => ({ id: item.id!, title: item.snippet?.title ?? item.id! }));
+  return cached({
+    userId,
+    group: `platform:${connectionId}`,
+    key: "listYouTubeCategories",
+    input: { regionCode },
+    schema: TitledItemsSchema,
+    load: async () => {
+      const youtube = await youtubeFor(userId, connectionId);
+      const result = await youtube.listVideoCategories({ part: ["snippet"], regionCode });
+      return (result.items ?? [])
+        .filter((item) => item.id && item.snippet?.assignable)
+        .map((item) => ({ id: item.id!, title: item.snippet?.title ?? item.id! }));
+    },
+  });
 }

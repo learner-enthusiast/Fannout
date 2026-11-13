@@ -7,6 +7,7 @@ export const providerFactory = createProviderFactory({
   getConnection: getSocialConnectionById,
   getValidAccessToken,
   facebook: { appSecret: env.FACEBOOK_CLIENT_SECRET, graphVersion: env.FACEBOOK_GRAPH_VERSION },
+  instagram: { graphVersion: env.INSTAGRAM_GRAPH_VERSION },
 });
 
 export const { createProviderForConnection, createYouTubeAnalyticsForConnection } = providerFactory;

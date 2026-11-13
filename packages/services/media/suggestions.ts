@@ -1,5 +1,6 @@
 import { and, db, eq, inArray, media, ne, sql } from "@repo/database";
 import { z } from "zod";
+import { invalidate } from "../cache";
 import { MediaRowSchema, type FolderSuggestion, type MediaRow, type MediaType } from "./model";
 import {
   buildFolderSuggestion,
@@ -56,5 +57,6 @@ export async function refreshFolderSuggestion(row: MediaRow): Promise<MediaRow> 
     .set({ metadata: { ...row.metadata, folderSuggestion: next } })
     .where(eq(media.id, row.id))
     .returning();
+  if (updated) await invalidate(updated.userId, "media");
   return updated ? MediaRowSchema.parse(updated) : row;
 }

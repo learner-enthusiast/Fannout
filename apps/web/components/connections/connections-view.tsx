@@ -32,6 +32,7 @@ import { ChannelSelectionDialog } from './channel-selection-dialog'
 import {
     defaultFailureMessage,
     failureMessages,
+    providerFailureMessages,
     providers,
     type ProviderSlug,
 } from './providers'
@@ -89,7 +90,8 @@ function useOAuthResult(onSelection: (id: string) => void) {
             if (selection) onSelection(selection)
         } else {
             toast.error(
-                failureMessages[params.get('reason') ?? ''] ??
+                providerFailureMessages[params.get('provider') as ProviderSlug]?.[params.get('reason') ?? ''] ??
+                    failureMessages[params.get('reason') ?? ''] ??
                     defaultFailureMessage
             )
         }

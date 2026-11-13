@@ -10,7 +10,7 @@ export type MediaView = RouterOutputs['media']['list']['items'][number]
 export type MediaLite = Pick<
     MediaView,
     'id' | 'name' | 'type' | 'status' | 'url' | 'orientation' | 'durationSeconds' | 'width' | 'height'
->
+> & { thumbUrl?: string | null }
 export type Issue = RouterOutputs['posts']['validate']['issues'][number]
 
 /** Everything the composer needs to rebuild itself after a reload. */
@@ -99,14 +99,14 @@ export function clearDraft() {
 /** social_connections.provider → composer platform. */
 export const platformOf = (provider: string): Platform | null => {
     const value = provider.toLowerCase()
-    return ['youtube', 'x', 'linkedin', 'threads', 'facebook'].includes(value) ? (value as Platform) : null
+    return ['youtube', 'x', 'linkedin', 'threads', 'facebook', 'instagram'].includes(value) ? (value as Platform) : null
 }
 
 /** X weighted length (official twitter-text, same as the server). */
 export const xWeight = (text: string): number => twitterText.parseTweet(text).weightedLength
 
 /** Platforms whose main format is vertical; a folder prefers main_portrait for them. */
-const PORTRAIT_FIRST: Platform[] = ['threads']
+const PORTRAIT_FIRST: Platform[] = ['threads', 'instagram']
 
 export const prefersPortrait = (platforms: Platform[]) =>
     platforms.length > 0 && platforms.every((p) => PORTRAIT_FIRST.includes(p))

@@ -3,6 +3,7 @@
 import { PlusIcon } from 'lucide-react'
 import { useMemo, useRef, useState } from 'react'
 
+import { keepPreviousData } from '@tanstack/react-query'
 import type { RouterOutputs } from '@repo/trpc/client'
 import { Badge } from '~/components/ui/badge'
 import { Button } from '~/components/ui/button'
@@ -78,7 +79,7 @@ export function MentionTextarea({
     const query = useDebouncedValue(active?.query ?? '', 150)
     const search = trpc.mentions.search.useQuery(
         { platform, q: query, limit: 10 },
-        { enabled: Boolean(active) && !adding, staleTime: 0 },
+        { enabled: Boolean(active) && !adding, staleTime: 0, placeholderData: keepPreviousData },
     )
     const contacts = useMemo(() => search.data?.items ?? [], [search.data])
     const create = trpc.mentions.create.useMutation({

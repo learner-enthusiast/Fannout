@@ -17,18 +17,24 @@ const ICON: Record<MediaType, LucideIcon> = {
 export function MediaPreview({
     type,
     url,
+    thumbUrl,
     alt,
 }: {
     type: MediaType
     url: string | null
+    /** Small JPEG (≤ 320 px). Preferred in lists and grids: far lighter than the original. */
+    thumbUrl?: string | null
     alt: string
 }) {
     const Icon = ICON[type]
     return (
         <div className="relative flex aspect-video w-full items-center justify-center overflow-hidden bg-muted">
-            {url && type === 'image' ? (
+            {thumbUrl && (type === 'image' || type === 'video') ? (
                 // eslint-disable-next-line @next/next/no-img-element -- presigned S3 URLs, not optimisable
-                <img src={url} alt={alt} loading="lazy" className="size-full object-cover" />
+                <img src={thumbUrl} alt={alt} width={320} height={180} loading="lazy" decoding="async" className="size-full object-cover" />
+            ) : url && type === 'image' ? (
+                // eslint-disable-next-line @next/next/no-img-element -- presigned S3 URLs, not optimisable
+                <img src={url} alt={alt} loading="lazy" decoding="async" className="size-full object-cover" />
             ) : url && type === 'video' ? (
                 <video
                     src={`${url}#t=0.1`}

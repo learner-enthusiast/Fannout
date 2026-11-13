@@ -15,9 +15,11 @@ import {
 } from "@repo/database";
 import { errors } from "@repo/errors";
 import { z } from "zod";
+import { cached, invalidate } from "../cache";
 import { decodeKeyCursor, toKeyPage } from "../common/pagination";
 import {
   CreateMentionInputSchema,
+  MentionContactPageSchema,
   MentionContactViewSchema,
   MentionPlatformSchema,
   SearchMentionsInputSchema,
@@ -46,7 +48,7 @@ async function seedOwnAccounts(userId: string) {
     if (!parsed.success) return [];
     const platform = parsed.data;
     const username = row.username?.replace(/^@/, "");
-    const handle = (platform === "x" || platform === "threads") && username && /^[A-Za-z0-9_.]+$/.test(username) ? username : null;
+    const handle = (platform === "x" || platform === "threads" || platform === "instagram") && username && /^[A-Za-z0-9_.]+$/.test(username) ? username : null;
     const platformRef = platform === "linkedin"
       ? `urn:li:person:${row.providerAccountId}`
       : platform === "facebook" && /^\d+$/.test(row.providerAccountId)
@@ -65,9 +67,26 @@ async function seedOwnAccounts(userId: string) {
   if (values.length) await db.insert(mentionContacts).values(values).onConflictDoNothing();
 }
 
+/** Group "mentions". Seeding the user's own accounts happens on a miss only; connection changes bump this group. */
 export async function searchMentionContacts(userId: string, input: unknown) {
   const { platform, q, cursor, limit } = SearchMentionsInputSchema.parse(input);
-  await seedOwnAccounts(userId);
+  return cached({
+    userId,
+    group: "mentions",
+    key: "searchMentionContacts",
+    input: { platform, q, cursor: cursor ?? null, limit },
+    schema: MentionContactPageSchema,
+    load: async () => {
+      await seedOwnAccounts(userId);
+      return loadMentionContacts(userId, { platform, q, cursor, limit });
+    },
+  });
+}
+
+async function loadMentionContacts(
+  userId: string,
+  { platform, q, cursor, limit }: { platform: MentionPlatform; q: string; cursor?: string | null; limit: number },
+) {
   const after = cursor ? decodeKeyCursor(cursor) : null;
   const afterCount = after ? z.coerce.number().int().nonnegative().parse(after.sortKey) : null;
   const pattern = `%${q}%`;
@@ -102,7 +121,10 @@ export async function createMentionContact(userId: string, input: CreateMentionI
   const data = CreateMentionInputSchema.parse(input);
   const values = { ...data, userId, handle: data.handle ?? null, platformRef: data.platformRef ?? null, avatarUrl: data.avatarUrl ?? null };
   const [inserted] = await db.insert(mentionContacts).values(values).onConflictDoNothing().returning();
-  if (inserted) return view(inserted);
+  if (inserted) {
+    await invalidate(userId, "mentions");
+    return view(inserted);
+  }
   const existing = await findByTarget(userId, data.platform, data.handle ?? data.platformRef!);
   if (existing) return view(existing);
   return errors.conflict("This mention contact already exists");
@@ -125,11 +147,13 @@ export async function updateMentionContact(userId: string, input: unknown) {
     platformRef: merged.platformRef ?? null,
     avatarUrl: merged.avatarUrl ?? null,
   }).where(and(eq(mentionContacts.id, id), eq(mentionContacts.userId, userId))).returning();
+  await invalidate(userId, "mentions");
   return view(row!);
 }
 
 export async function deleteMentionContact(userId: string, id: string) {
   const rows = await db.delete(mentionContacts).where(and(eq(mentionContacts.id, z.uuid().parse(id)), eq(mentionContacts.userId, userId))).returning({ id: mentionContacts.id });
+  if (rows.length) await invalidate(userId, "mentions");
   return { updated: rows.length > 0 };
 }
 
@@ -158,5 +182,6 @@ export async function recordMentionsUsed(userId: string, platform: string, input
   if (!ids.size) return;
   await db.update(mentionContacts).set({ useCount: sql`${mentionContacts.useCount} + 1`, lastUsedAt: new Date() })
     .where(and(eq(mentionContacts.userId, userId), inArray(mentionContacts.id, [...ids])));
+  await invalidate(userId, "mentions");
 }
 

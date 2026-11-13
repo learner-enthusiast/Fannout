@@ -24,6 +24,7 @@ import { cn } from '~/lib/utils'
 import { trpc } from '~/trpc/client'
 import { InfiniteList } from '~/components/infinite-list'
 import { infiniteOptions, useInfiniteList } from '~/hooks/use-infinite-list'
+import { useMediaQuery } from '~/hooks/use-media-query'
 
 const TYPE_NOUN = { video: 'videos', image: 'images', json: 'JSON files', subtitle: 'subtitle files' } as const
 
@@ -66,6 +67,8 @@ export function MediaPickerDialog({
     const foldersQuery = trpc.folders.list.useInfiniteQuery({ ...(q ? { q } : {}) }, infiniteOptions({ enabled: open && Boolean(onFolder) }))
     const folders = useInfiniteList(foldersQuery)
 
+    const wide = useMediaQuery('(min-width: 640px)')
+
     const toggle = (item: MediaLite) => {
         if (!multiple) return setPicked([item])
         setPicked((current) =>
@@ -95,6 +98,7 @@ export function MediaPickerDialog({
                 root={libraryRoot}
                 getKey={(item) => item.id}
                 className="grid grid-cols-2 gap-2 sm:grid-cols-4"
+                virtual={{ estimateSize: 150, columns: wide ? 4 : 2 }}
                 skeletonCount={8}
                 skeleton={<Skeleton className="aspect-video w-full rounded-control" />}
                 empty={<p className="py-8 text-center text-meta">No {TYPE_NOUN[type]}{q ? ' match' : ' yet'}.</p>}
@@ -112,7 +116,7 @@ export function MediaPickerDialog({
                                     index >= 0 ? 'border-primary' : 'border-transparent'
                                 )}
                             >
-                                <MediaPreview type={item.type} url={item.url} alt={item.name} />
+                                <MediaPreview type={item.type} url={item.url} thumbUrl={item.thumbUrl} alt={item.name} />
                                 <span className="truncate px-2 pt-1 text-meta">{item.name}</span>
                                 <span className="px-2 pb-1 text-mono text-muted-foreground">
                                     {item.status !== 'ready'
@@ -166,6 +170,7 @@ export function MediaPickerDialog({
                                     root={foldersRoot}
                                     getKey={(folder) => folder.id}
                                     className="flex flex-col gap-1"
+                                    virtual={{ estimateSize: 40, gap: 4 }}
                                     skeleton={<Skeleton className="h-10 w-full rounded-control" />}
                                     empty={<p className="py-8 text-center text-meta">No folders found.</p>}
                                     renderItem={(folder) => (

@@ -147,7 +147,7 @@ export function ComposeFieldControl({
     onChange: (value: unknown) => void
     /** Only for fields marked ai in the capabilities. */
     ai?: FieldAi
-    platform?: 'youtube' | 'x' | 'linkedin' | 'threads' | 'facebook'
+    platform?: 'youtube' | 'x' | 'linkedin' | 'threads' | 'facebook' | 'instagram'
     mentionsEnabled?: boolean
     mentions?: MentionRange[]
     onMentionsChange?: (ranges: MentionRange[]) => void

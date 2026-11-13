@@ -3,11 +3,14 @@ import { errors } from "@repo/errors";
 import { logger } from "@repo/logger";
 import { ProviderError } from "@repo/providers";
 import { z } from "zod";
+import { invalidate } from "../cache";
 import { createProviderForConnection } from "../provider-factory";
 import { platformForProvider, type Platform } from "../publishing/platforms";
 import { classifyPublishError } from "../publishing/run";
+export { resetAnalyticsSyncAfterReconnect } from "./reconnect";
 import { ANALYTICS_CAPABILITIES, missingScopes } from "./capabilities";
 import { facebookAnalytics } from "./platforms/facebook";
+import { instagramAnalytics } from "./platforms/instagram";
 import { threadsAnalytics } from "./platforms/threads";
 import type { AnalyticsContext, PlatformAnalytics, PostRef } from "./platforms/types";
 import { xAnalytics } from "./platforms/x";
@@ -22,6 +25,7 @@ const PLATFORM_ANALYTICS: Partial<Record<Platform, PlatformAnalytics>> = {
   facebook: facebookAnalytics,
   threads: threadsAnalytics,
   x: xAnalytics,
+  instagram: instagramAnalytics,
 };
 
 const HOUR = 60 * 60 * 1000;
@@ -69,6 +73,9 @@ async function setState(connectionId: string, patch: Partial<typeof analyticsSyn
     .insert(analyticsSyncState)
     .values({ socialConnectionId: connectionId, ...patch })
     .onConflictDoUpdate({ target: analyticsSyncState.socialConnectionId, set: { ...patch, updatedAt: new Date() } });
+  // Every sync outcome (rows written, error, needs_reconnect) goes through here: the dashboard must re-read.
+  const [owner] = await db.select({ userId: socialConnections.userId }).from(socialConnections).where(eq(socialConnections.id, connectionId)).limit(1);
+  if (owner) await invalidate(owner.userId, "analytics");
 }
 
 /**
@@ -156,6 +163,7 @@ export async function duePosts(connectionId: string, platform: Platform, now = n
       externalPostId: posts.externalPostId,
       publishedAt: posts.publishedAt,
       mediaType: sql<string | null>`${posts.config}->>'mediaType'`,
+      postType: sql<string | null>`${posts.config}->'progress'->>'postType'`,
       lastCapturedAt: sql<string | null>`(select max(s.captured_at) from ${analyticsPostSnapshots} s where s.post_id = ${posts.id})`,
     })
     .from(posts)
@@ -171,7 +179,7 @@ export async function duePosts(connectionId: string, platform: Platform, now = n
   return rows
     .filter((r) => r.publishedAt && isPostDue(platform, r.publishedAt, r.lastCapturedAt ? new Date(r.lastCapturedAt) : null, now))
     .slice(0, MAX_POSTS_PER_RUN)
-    .map((r) => ({ postId: r.postId, externalPostId: r.externalPostId!, publishedAt: r.publishedAt!, mediaType: r.mediaType }));
+    .map((r) => ({ postId: r.postId, externalPostId: r.externalPostId!, publishedAt: r.publishedAt!, mediaType: r.mediaType, postType: r.postType }));
 }
 
 export async function syncPostMetrics(connectionId: string): Promise<{ posts: number } | { skipped: true }> {

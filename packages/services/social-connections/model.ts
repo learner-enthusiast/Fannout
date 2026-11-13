@@ -3,7 +3,7 @@ import { z } from "zod";
 export const SocialConnectionRowSchema = z.object({
   id: z.uuid().describe("Connection ID; use as socialConnectionId when publishing."),
   userId: z.uuid().describe("Owner's user ID."),
-  provider: z.string().min(1).describe("LINKEDIN, X, YOUTUBE, FACEBOOK or THREADS."),
+  provider: z.string().min(1).describe("LINKEDIN, X, YOUTUBE, FACEBOOK, THREADS or INSTAGRAM."),
   providerAccountId: z.string().min(1).describe("Account/page/channel ID on the platform."),
   accountType: z.string().nullable().describe("Kind of account, e.g. person, organization, page or channel."),
   username: z.string().nullable().describe("Account handle."),

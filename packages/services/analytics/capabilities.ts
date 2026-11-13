@@ -27,6 +27,13 @@ export const ANALYTICS_CAPABILITIES: Record<Platform, AnalyticsCapability> = {
     postMetrics: ["views", "likes", "comments", "reposts", "quotes", "shares"],
     requiredScopes: ["threads_manage_insights"],
   },
+  instagram: {
+    supported: true,
+    accountMetrics: ["views", "reach", "engagements", "followers"],
+    postMetrics: ["views", "reach", "likes", "comments", "saves", "shares", "engagements", "avg_view_duration_seconds"],
+    requiredScopes: ["instagram_manage_insights"],
+    note: "Instagram insights can arrive up to 48 hours late. Average watch time is reels only.",
+  },
   x: {
     supported: true,
     accountMetrics: ["followers"],

@@ -313,13 +313,14 @@ function setup(options: { configured?: Partial<Record<OAuthProviderSlug, boolean
       : credentials(slug, scopes);
   const providers = createProviderRegistry({
     linkedin: cfg("linkedin", "openid profile email w_member_social"),
-    x: cfg("x", "tweet.read users.read offline.access"),
+    x: cfg("x", "tweet.read tweet.write users.read media.write offline.access"),
     youtube: cfg(
       "youtube",
       "openid email profile https://www.googleapis.com/auth/youtube.readonly",
     ),
     facebook: cfg("facebook", "public_profile,pages_show_list"),
     threads: cfg("threads", "threads_basic"),
+    instagram: { ...cfg("instagram", ""), configId: "test-config-id" },
   });
   const service = createOAuthService({
     providers,
@@ -413,7 +414,7 @@ function xTokens(overrides: Record<string, unknown> = {}): TokenHandler {
       refresh_token: "x-refresh",
       expires_in: 7200,
       token_type: "bearer",
-      scope: "tweet.read users.read offline.access",
+      scope: "tweet.read tweet.write users.read media.write offline.access",
       ...overrides,
     });
 }
@@ -694,7 +695,7 @@ describe("OAuth callback: providers", () => {
     assert.equal(row.username, "ada");
     assert.equal(row.displayName, "Ada");
     assert.equal(row.profilePictureUrl, "https://pbs.test/a_400x400.jpg");
-    assert.deepEqual(row.scopes, ["tweet.read", "users.read", "offline.access"]);
+    assert.deepEqual(row.scopes, ["tweet.read", "tweet.write", "users.read", "media.write", "offline.access"]);
     // Tokens are stored encrypted, never in plaintext.
     assert.ok(row.accessTokenEncrypted?.startsWith("v1."));
     assert.notEqual(row.accessTokenEncrypted, "x-access");

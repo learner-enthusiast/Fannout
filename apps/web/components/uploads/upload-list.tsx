@@ -12,7 +12,7 @@ import {
 } from '~/components/ui/tooltip'
 import { formatBytes } from '~/lib/media-format'
 
-import { useUploads, type UploadItem, type UploadStatus } from './upload-provider'
+import { useUploadActions, useUploadItems, type UploadItem, type UploadStatus } from './upload-provider'
 
 const badgeFor: Record<UploadStatus, { status: Status; label?: string }> = {
     queued: { status: 'pending', label: 'Queued' },
@@ -24,7 +24,7 @@ const badgeFor: Record<UploadStatus, { status: Status; label?: string }> = {
 }
 
 function UploadRow({ item }: { item: UploadItem }) {
-    const { cancel, dismiss } = useUploads()
+    const { cancel, dismiss } = useUploadActions()
     const badge = badgeFor[item.status]
     const percent = Math.round(item.progress * 100)
     const canCancel = item.status === 'queued' || item.status === 'uploading'
@@ -75,7 +75,7 @@ function UploadRow({ item }: { item: UploadItem }) {
 
 /** Per-file progress for every upload in the session. */
 export function UploadList() {
-    const { items } = useUploads()
+    const items = useUploadItems()
     if (items.length === 0) return null
     return (
         <ul className="flex flex-col gap-4" aria-live="polite">

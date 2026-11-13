@@ -55,7 +55,7 @@ export function GlobalProviders({ children }: { children: ReactNode }) {
                 disableTransitionOnChange
             >
                 <trpc.Provider client={trpcClient} queryClient={queryClient}>
-                    <TooltipProvider delay={300}>{children}</TooltipProvider>
+                    <TooltipProvider delay={300} closeDelay={100} timeout={100}>{children}</TooltipProvider>
                     <Toaster />
                 </trpc.Provider>
             </NextThemesProvider>
