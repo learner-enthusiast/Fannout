@@ -81,7 +81,12 @@ export function createInstagramProvider(credentials: ProviderCredentials): OAuth
     allowsAccountSelection: false,
     connectsAllAccounts: true,
     omitScopeParam: true,
-    extraAuthorizationParams: { config_id: configId, prompt: "login" },
+    extraAuthorizationParams: {
+      config_id: configId,
+      prompt: "login",
+      display: "popup",
+      override_default_response_type: "true",
+    },
     jwksCache: {},
 
     isConfigured: () => Boolean(credentials.clientId && credentials.clientSecret && configId),

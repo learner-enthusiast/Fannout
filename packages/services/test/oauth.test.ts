@@ -320,7 +320,11 @@ function setup(options: { configured?: Partial<Record<OAuthProviderSlug, boolean
     ),
     facebook: cfg("facebook", "public_profile,pages_show_list"),
     threads: cfg("threads", "threads_basic"),
-    instagram: { ...cfg("instagram", ""), configId: "test-config-id" },
+    instagram: {
+      ...cfg("instagram", ""),
+      configId: "test-config-id",
+      redirectUri: "https://api.test/api/oauth/facebook/callback",
+    },
   });
   const service = createOAuthService({
     providers,
@@ -476,6 +480,19 @@ describe("OAuth initiation", () => {
     const linkedin = await start(env, "linkedin");
     assert.equal(linkedin.url.searchParams.get("code_challenge"), null);
     assert.equal(linkedin.url.searchParams.get("scope"), "openid profile email w_member_social");
+  });
+
+  test("Instagram Unified Login matches Meta authorize URL shape", async () => {
+    const flow = await start(env, "instagram");
+    assert.equal(flow.url.origin + flow.url.pathname, "https://www.facebook.com/dialog/oauth");
+    assert.equal(flow.url.searchParams.get("client_id"), "instagram-client-id");
+    assert.equal(flow.url.searchParams.get("redirect_uri"), "https://api.test/api/oauth/facebook/callback");
+    assert.equal(flow.url.searchParams.get("config_id"), "test-config-id");
+    assert.equal(flow.url.searchParams.get("display"), "popup");
+    assert.equal(flow.url.searchParams.get("override_default_response_type"), "true");
+    assert.equal(flow.url.searchParams.get("prompt"), "login");
+    assert.equal(flow.url.searchParams.get("scope"), null);
+    assert.equal(flow.url.searchParams.get("response_type"), "code");
   });
 
   test("rejects unconfigured providers and unsafe returnTo values", async () => {

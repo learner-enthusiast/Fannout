@@ -81,10 +81,10 @@ export const providers = createProviderRegistry({
     apiVersion: env.FACEBOOK_GRAPH_VERSION,
   },
   instagram: {
-    // Same Meta app as Facebook; permissions come from the Login for Business configuration.
+    // Same Meta app as Facebook; Unified Login redirects to the Facebook Login callback URL.
     clientId: env.FACEBOOK_CLIENT_ID,
     clientSecret: env.FACEBOOK_CLIENT_SECRET,
-    redirectUri: env.INSTAGRAM_REDIRECT_URI,
+    redirectUri: env.FACEBOOK_REDIRECT_URI,
     scopes: "",
     apiVersion: env.INSTAGRAM_GRAPH_VERSION,
     configId: env.INSTAGRAM_CONFIG_ID,
@@ -124,6 +124,7 @@ export function getConfiguredProviders(): Record<OAuthProviderSlug, boolean> {
   };
 }
 
+export { oauthCallbackSlug } from "./callback-slug";
 export { createOAuthService, describeOAuthError, OAUTH_TRANSACTION_TTL_MS } from "./service";
 export type {
   ConnectionStore,

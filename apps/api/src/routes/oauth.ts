@@ -3,6 +3,7 @@ import { AppError } from "@repo/errors";
 import { logger } from "@repo/logger";
 import {
   handleOAuthCallback,
+  oauthCallbackSlug,
   OAUTH_TRANSACTION_TTL_MS,
   startOAuthConnection,
   type HandleCallbackInput,
@@ -30,7 +31,9 @@ export type OAuthRouterDependencies = {
 };
 
 const bindingCookieName = (slug: OAuthProviderSlug) => `fannout_oauth_${slug}`;
-const bindingCookiePath = (slug: OAuthProviderSlug) => `/api/oauth/${slug}`;
+// Instagram's callback arrives at /api/oauth/facebook/callback, so its cookie must cover that path too.
+const bindingCookiePath = (slug: OAuthProviderSlug) =>
+  slug === "instagram" ? "/api/oauth" : `/api/oauth/${slug}`;
 
 function readCookie(req: Request, name: string): string | undefined {
   const header = req.headers.cookie;
@@ -149,20 +152,23 @@ export function createOAuthRouter(deps: OAuthRouterDependencies) {
       );
     }
 
-    const cookieName = bindingCookieName(slug.data);
+    const stateParam = typeof req.query.state === "string" ? req.query.state : null;
+    const effectiveSlug = await oauthCallbackSlug(slug.data, stateParam);
+
+    const cookieName = bindingCookieName(effectiveSlug);
     const bindingToken = readCookie(req, cookieName);
     res.clearCookie(cookieName, {
       httpOnly: true,
       secure: deps.secureCookies,
       sameSite: "lax",
-      path: bindingCookiePath(slug.data),
+      path: bindingCookiePath(effectiveSlug),
     });
 
     let result: OAuthCallbackResult;
     try {
       const sessionUserId = await deps.resolveUserId(req).catch(() => null);
       result = await deps.handleCallback({
-        provider: slug.data,
+        provider: effectiveSlug,
         // Only the query string is read; the base is irrelevant.
         callbackUrl: new URL(req.originalUrl, "http://callback.invalid"),
         bindingToken,
@@ -171,7 +177,7 @@ export function createOAuthRouter(deps: OAuthRouterDependencies) {
     } catch {
       result = {
         status: "failed",
-        provider: PROVIDER_BY_SLUG[slug.data],
+        provider: PROVIDER_BY_SLUG[effectiveSlug],
         returnTo: DEFAULT_RETURN_TO,
         reason: "server_error",
       };
@@ -179,7 +185,7 @@ export function createOAuthRouter(deps: OAuthRouterDependencies) {
 
     if (result.status === "failed") {
       logger.warn("OAuth callback failed", {
-        provider: slug.data,
+        provider: effectiveSlug,
         reason: result.reason,
         host: req.get("host"),
         hasBindingCookie: bindingToken !== undefined,
@@ -191,7 +197,7 @@ export function createOAuthRouter(deps: OAuthRouterDependencies) {
 
     return res.redirect(
       302,
-      buildWebRedirect(deps.webUrl, slug.data, {
+      buildWebRedirect(deps.webUrl, effectiveSlug, {
         status: result.status,
         returnTo: result.returnTo,
         reason: result.status === "failed" ? result.reason : undefined,

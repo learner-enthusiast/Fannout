@@ -92,7 +92,6 @@ const envSchema = z.object({
    * Facebook Login for Business configuration id. Permissions come from that configuration (no scope param).
    */
   INSTAGRAM_CONFIG_ID: optional,
-  INSTAGRAM_REDIRECT_URI: z.url().default("http://localhost:8000/api/oauth/instagram/callback"),
   INSTAGRAM_GRAPH_VERSION: z
     .string()
     .regex(/^v\d+\.\d+$/)
