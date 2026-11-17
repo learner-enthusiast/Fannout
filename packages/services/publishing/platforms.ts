@@ -3,7 +3,7 @@ import { INSTAGRAM_COMPOSE, InstagramComposeInputSchema } from "@repo/providers/
 import { LINKEDIN_COMMUNITY_COMPOSE, LINKEDIN_COMPOSE, LinkedInComposeInputSchema } from "@repo/providers/linkedin";
 import { THREADS_COMPOSE, ThreadsComposeInputSchema } from "@repo/providers/threads";
 import { X_COMPOSE, XComposeInputSchema } from "@repo/providers/x";
-import { YOUTUBE_COMPOSE, YouTubeComposeInputSchema } from "@repo/providers/youtube";
+import { YOUTUBE_COMPOSE, YOUTUBE_MANUAL_FIELDS, YouTubeComposeInputSchema } from "@repo/providers/youtube";
 import type { ComposeCapabilities } from "@repo/providers";
 import { z } from "zod";
 import { env } from "../env";
@@ -23,10 +23,18 @@ export type PlatformDefinition = {
   capabilities: ComposeCapabilities;
   /** Field holding the post's main text (stored as posts.caption). */
   captionField: string;
+  /** Compose fields of a manual post (capabilities.carouselMode = "manual"); the first one is its text. */
+  manualFields?: readonly string[];
 };
 
+/** A multi-photo post the platform has no API for: prepared here, published by hand. */
+export function isManualPost(platform: Platform, mediaType: "video" | "photos", photoCount: number): boolean {
+  const capabilities = PLATFORMS[platform].capabilities;
+  return mediaType === "photos" && capabilities.carouselMode === "manual" && photoCount >= 2;
+}
+
 export const PLATFORMS: Record<Platform, PlatformDefinition> = {
-  youtube: { platform: "youtube", label: "YouTube", schema: YouTubeComposeInputSchema, capabilities: YOUTUBE_COMPOSE, captionField: "title" },
+  youtube: { platform: "youtube", label: "YouTube", schema: YouTubeComposeInputSchema, capabilities: YOUTUBE_COMPOSE, captionField: "title", manualFields: YOUTUBE_MANUAL_FIELDS },
   x: { platform: "x", label: "X", schema: XComposeInputSchema, capabilities: X_COMPOSE, captionField: "text" },
   linkedin: {
     platform: "linkedin",

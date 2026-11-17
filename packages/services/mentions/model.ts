@@ -13,7 +13,7 @@ export const MentionContactViewSchema = z.object({
   platform: MentionPlatformSchema.describe("Platform the contact belongs to."),
   displayName: z.string().describe("Label shown in the composer."),
   handle: z.string().nullable().describe("X/Threads/Instagram username without @."),
-  platformRef: z.string().nullable().describe("LinkedIn URN or numeric Facebook Page ID."),
+  platformRef: z.string().nullable().describe("LinkedIn URN, numeric Facebook Page ID, or (X) the account's numeric user ID once it was resolved for tagging."),
   avatarUrl: z.string().nullable().describe("Optional avatar URL."),
   useCount: z.number().int().nonnegative().describe("Times this contact was used in a published post."),
   lastUsedAt: z.date().nullable().describe("When the contact was last used in a published post."),
@@ -63,3 +63,14 @@ export type UpdateMentionInput = z.input<typeof UpdateMentionInputSchema>;
 
 export const MentionIdInputSchema = z.object({ id: z.uuid().describe("Mention contact ID.") });
 export const UpdatedMentionSchema = z.object({ updated: z.boolean().describe("Whether a contact was changed.") });
+
+export const ResolveXUserInputSchema = z.object({
+  socialConnectionId: z.uuid().describe("A connected X account (the lookup runs in its user context)."),
+  username: z.string().trim().regex(/^@?[A-Za-z0-9_]{1,15}$/, "X usernames are 1–15 letters, numbers or underscores").transform((value) => value.replace(/^@/, "")).describe("X username, with or without @."),
+});
+export const ResolvedXUserSchema = z.object({
+  username: z.string().describe("Username as X spells it."),
+  xUserId: z.string().describe("Numeric X user ID to put in taggedUsers."),
+  displayName: z.string().describe("Account name."),
+});
+export type ResolvedXUser = z.infer<typeof ResolvedXUserSchema>;

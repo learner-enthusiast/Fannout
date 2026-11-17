@@ -23,7 +23,7 @@ export function UploadDialog({ open, onOpenChange }: { open: boolean; onOpenChan
             <DialogContent className="sm:max-w-2xl">
                 <DialogHeader>
                     <DialogTitle>Upload media</DialogTitle>
-                    <DialogDescription>Videos and images up to 5 GB; SRT/VTT subtitles and JSON up to 1 MB.</DialogDescription>
+                    <DialogDescription>Videos and images up to the largest size any platform accepts; SRT/VTT subtitles and JSON up to 1 MB.</DialogDescription>
                 </DialogHeader>
                 <MediaUpload showQueue={false} onStarted={() => onOpenChange(false)} />
             </DialogContent>

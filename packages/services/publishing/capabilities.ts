@@ -1,14 +1,21 @@
+import { POST_TYPES, type PostType } from "@repo/ai/prompts/length-targets-api";
 import { readComposeMeta, type ComposeFieldMeta } from "@repo/providers";
 import { z } from "zod";
 import { ANALYTICS_CAPABILITIES } from "../analytics/capabilities";
 import { AnalyticsCapabilitySchema } from "../analytics/model";
+import { aiBandFor } from "../ai-content/targets";
 import { PLATFORMS, type Platform } from "./platforms";
+
+const AiBandSchema = z.object({
+  min: z.number().int().describe("Lower end of the length AI aims for."),
+  max: z.number().int().describe("Upper end of the length AI aims for."),
+});
 
 export const ComposeFieldSchema = z.object({
   name: z.string().describe("Key to use in targets[].input."),
   label: z.string().describe("Human-readable field name."),
   description: z.string().describe("What the field does and its limits."),
-  kind: z.enum(["text", "textarea", "select", "toggle", "tags", "playlist", "radio"]).describe("Input kind: text/textarea = string, toggle/radio = boolean or option value, select = option value, tags = string[], playlist = playlist ID."),
+  kind: z.enum(["text", "textarea", "select", "toggle", "tags", "playlist", "radio", "relatedVideo"]).describe("Input kind: text/textarea = string, toggle/radio = boolean or option value, select = option value, tags = string[], playlist = playlist ID, relatedVideo = { videoId, title, watchNext? } from the channel's uploads."),
   required: z.boolean().describe("Whether the field must be sent."),
   maxLength: z.number().int().optional().describe("Length limit, counted per countMode."),
   countMode: z.enum(["chars", "bytes", "weighted"]).optional().describe("How maxLength is counted: chars, UTF-8 bytes, or X-weighted (URLs count 23)."),
@@ -23,6 +30,12 @@ export const ComposeFieldSchema = z.object({
   helper: z.string().optional().describe("Extra hint shown in the web composer."),
   /** AI can write this field. */
   ai: z.boolean().optional().describe("POST /ai/generations can write this field."),
+  aiBands: z.object({
+    video: AiBandSchema.optional().describe("Band for a regular video post."),
+    short: AiBandSchema.optional().describe("Band for a vertical short (Shorts/Reels)."),
+    image: AiBandSchema.optional().describe("Band for a single-photo post."),
+    carousel: AiBandSchema.optional().describe("Band for a multi-photo post."),
+  }).optional().describe("Length band AI aims for per post type, in the field's countMode units (always within maxLength). Shorter text is still valid."),
 });
 export type ComposeField = z.infer<typeof ComposeFieldSchema>;
 
@@ -38,7 +51,24 @@ export const PlatformCapabilitiesSchema = z.object({
   supportsPhotos: z.boolean().describe("Can publish photos."),
   maxPhotos: z.number().int().describe("Most photos per post."),
   minCarousel: z.number().int().describe("Fewest photos for a multi-photo post."),
+  carouselMode: z.enum(["api", "manual", "none"]).describe("Multi-photo posts: api = Fannout publishes them; manual = the platform has no API for them, so the post is stored as a manual post (status draft) for the user to publish by hand; none = unsupported."),
+  carouselMax: z.number().int().describe("Most photos in a multi-photo post."),
+  tagging: z.object({
+    image: z.enum(["positioned", "list", "none"]).describe("Tags on photos: positioned = username + x/y (0–1), list = usernames only."),
+    video: z.enum(["list", "none"]).describe("Tags on videos: list = usernames only."),
+    max: z.number().int().describe("Most tags per media item (Instagram) or per post (X)."),
+    needsUserId: z.boolean().describe("Tags are sent as user IDs: resolve usernames first (POST /mentions/x/resolve)."),
+  }).describe("People tagged on media, separate from @mentions in the text."),
+  collaborators: z.object({ max: z.number().int().describe("Most collaborators per post.") }).nullable().describe("Collaborator invites; null when the platform has none."),
   supportsThumbnail: z.boolean().describe("Accepts a custom video thumbnail (thumbnailByConnection)."),
+  thumbnailRules: z.object({
+    maxBytes: z.number().describe("Largest thumbnail in bytes."),
+    mimeTypes: z.array(z.string()).describe("Accepted thumbnail MIME types."),
+    aspect: z.enum(["landscape", "portrait"]).describe("Shape the platform shows; the web composer assigns picked images by it."),
+    recommended: z.string().describe("Recommended size, e.g. 1280×720 (16:9)."),
+    note: z.string().optional().describe("Platform caveat (e.g. YouTube needs a verified channel)."),
+  }).optional().describe("Custom thumbnail constraints checked by POST /posts/validate; absent when no thumbnail is supported or the platform documents none."),
+  perImageAltTextMax: z.number().int().optional().describe("Photo posts accept input.altTexts (media ID → alt text) up to this many characters each; absent = no per-image alt text."),
   supportsDelete: z.boolean().describe("Fannout can delete published posts here."),
   deleteNote: z.string().describe("Platform note about deletes."),
   supportsEdit: z.boolean().describe("Published posts can be edited."),
@@ -61,12 +91,19 @@ export const PlatformCapabilitiesSchema = z.object({
 export type PlatformCapabilities = z.infer<typeof PlatformCapabilitiesSchema>;
 
 /** Field descriptors read from the platform's compose schema (`.meta()` + optionality). */
-export function describeFields(schema: z.ZodObject): ComposeField[] {
+export function describeFields(schema: z.ZodObject, platform?: Platform): ComposeField[] {
   return Object.entries(schema.shape).flatMap(([name, field]) => {
     const meta: ComposeFieldMeta | undefined = readComposeMeta(field as z.ZodType);
     if (!meta) return [];
     const required = !(field as z.ZodType).safeParse(undefined).success;
-    return [ComposeFieldSchema.parse({ name, required, ...meta })];
+    const bands: Partial<Record<PostType, { min: number; max: number }>> = {};
+    if (platform && meta.ai) {
+      for (const postType of POST_TYPES) {
+        const band = aiBandFor(platform, postType, name);
+        if (band && band.min > 0) bands[postType] = { min: band.min, max: band.max };
+      }
+    }
+    return [ComposeFieldSchema.parse({ name, required, ...meta, ...(Object.keys(bands).length ? { aiBands: bands } : {}) })];
   });
 }
 
@@ -76,7 +113,7 @@ export function platformCapabilities(platform: Platform): PlatformCapabilities {
     platform,
     label: definition.label,
     ...definition.capabilities,
-    fields: describeFields(definition.schema),
+    fields: describeFields(definition.schema, platform),
     analytics: ANALYTICS_CAPABILITIES[platform],
   };
 }

@@ -107,20 +107,40 @@ export const xPublisher: Publisher<XProvider> = {
     }
 
     await ctx.save({ createAttempts: attempts + 1, createAttemptedAt: new Date().toISOString() }, "Creating post");
-    let id: string;
-    try {
-      const created = await provider.createPost({
+    // media.tagged_user_ids (user IDS, not usernames) rides along with media_ids, for images and videos alike.
+    const tagged = ctx.progress.tagsDropped ? [] : (input.taggedUsers ?? []);
+    const mediaKind = ctx.mediaType === "video" ? "video" : "image";
+    const create = (withTags: boolean) =>
+      provider.createPost({
         ...(input.text?.trim() ? { text: input.text } : {}),
-        media: { mediaIds },
+        media: { mediaIds, ...(withTags && tagged.length ? { taggedUserIds: tagged.map((tag) => tag.xUserId) } : {}) },
         ...(input.replySettings && input.replySettings !== "everyone" ? { replySettings: input.replySettings } : {}),
         ...(input.madeWithAi ? { madeWithAi: true } : {}),
         ...(input.paidPartnership ? { paidPartnership: true } : {}),
       });
-      id = created.data.id;
-    } catch (error) {
-      // Definite rejection (4xx incl. 429): nothing was created, so it doesn't count as an attempt.
+    // Definite rejection (4xx incl. 429): nothing was created, so it doesn't count as an attempt.
+    const rollback = async (error: unknown) => {
       if (error instanceof ProviderError && error.status !== null && error.status < 500) await ctx.save({ createAttempts: attempts });
-      throw error;
+    };
+    let id: string;
+    try {
+      id = (await create(true)).data.id;
+      if (tagged.length) logUploadEvent(ctx, "x", "tags_accepted", { mediaType: mediaKind, count: tagged.length });
+    } catch (error) {
+      if (!tagged.length || !isTagRejection(error)) {
+        await rollback(error);
+        throw error;
+      }
+      // Tagging is off for someone, not allowed on this media type, or a user is gone: post ONCE more
+      // without tags and tell the user. Every other error goes to the normal classifier.
+      logUploadEvent(ctx, "x", "tags_rejected", { mediaType: mediaKind, count: tagged.length, message: (error as Error).message });
+      await ctx.save({ tagsDropped: tagged.map((tag) => tag.username) }, "Posting without tags");
+      try {
+        id = (await create(false)).data.id;
+      } catch (retryError) {
+        await rollback(retryError);
+        throw retryError;
+      }
     }
     // Saved before anything else: createPost isn't idempotent.
     await ctx.save({ externalPostId: id }, "Posted");
@@ -129,6 +149,18 @@ export const xPublisher: Publisher<XProvider> = {
     return { externalPostId: id, postUrl: statusUrl(id, username) };
   },
 };
+
+/** X refused the post because of media.tagged_user_ids (a 400/403 that names tagging). */
+export function isTagRejection(error: unknown): boolean {
+  if (!(error instanceof ProviderError) || (error.status !== 400 && error.status !== 403)) return false;
+  let body = `${error.providerCode ?? ""} ${error.message}`;
+  try {
+    body += ` ${JSON.stringify(error.details ?? {})}`;
+  } catch {
+    // message only
+  }
+  return /tagged_user_ids|tagged[ _]user|media\.tagged|tagging|\btag(?:s|ged)?\b/i.test(body);
+}
 
 /** Recent posts since the first create attempt, matched by attached media key (video) or exact text. */
 async function findCreatedPost(provider: XProvider, ctx: PublishContext, input: XComposeInput, mediaKey: string | null): Promise<string | null> {

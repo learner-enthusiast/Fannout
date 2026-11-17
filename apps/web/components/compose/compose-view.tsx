@@ -8,6 +8,8 @@ import { toast } from 'sonner'
 
 import type { RouterOutputs } from '@repo/trpc/client'
 import { MediaPreview } from '~/components/media/media-preview'
+import { useUploadActions, useUploadStatuses, type UploadSlot } from '~/components/uploads/upload-provider'
+import { SlotDropTarget, UploadRing } from '~/components/uploads/upload-ring'
 import { Alert, AlertDescription, AlertTitle } from '~/components/ui/alert'
 import { Badge } from '~/components/ui/badge'
 import { Button } from '~/components/ui/button'
@@ -24,15 +26,23 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '~/components/ui/tooltip
 import { ToggleGroup, ToggleGroupItem } from '~/components/ui/toggle-group'
 import { useDebouncedValue } from '~/hooks/use-debounced-value'
 import {
+    autoThumbnail,
     clearDraft,
+    isManualPost,
+    postTypeOf,
+    tagModeOf,
+    type DraftUserTag,
     emptyDraft,
     isEmpty,
+    isInFlight,
+    localMediaIssues,
     loadDraft,
     platformOf,
     prefersPortrait,
     sameValue,
     saveDraft,
     textFieldOf,
+    type AiSource,
     type Capabilities,
     type ComposeDraft,
     type Issue,
@@ -53,6 +63,25 @@ type Connection = RouterOutputs['socialConnections']['list']['items'][number]
 type AiFill = { connectionId: string; field: string; value: unknown }
 type AiIssue = RouterOutputs['ai']['getGeneration']['issues'][number]
 
+/** Every media id a draft points at (slots and AI sources). */
+function referencedIds(d: ComposeDraft): string[] {
+    return [d.videoId, ...d.photoIds, ...Object.values(d.thumbnails), ...d.thumbnailPool, d.aiJsonId, d.aiSubtitleId].filter((id): id is string => Boolean(id))
+}
+
+/** Draft without these media (a cancelled upload leaves every slot). */
+function withoutMedia(d: ComposeDraft, ids: string[]): Partial<ComposeDraft> {
+    const gone = (id: string | null | undefined) => Boolean(id && ids.includes(id))
+    return {
+        videoId: gone(d.videoId) ? null : d.videoId,
+        photoIds: d.photoIds.filter((id) => !gone(id)),
+        photoOverrides: Object.fromEntries(Object.entries(d.photoOverrides).map(([key, list]) => [key, list.filter((id) => !gone(id))])),
+        thumbnails: Object.fromEntries(Object.entries(d.thumbnails).filter(([, id]) => !gone(id))),
+        thumbnailPool: d.thumbnailPool.filter((id) => !gone(id)),
+        aiJsonId: gone(d.aiJsonId) ? null : d.aiJsonId,
+        aiSubtitleId: gone(d.aiSubtitleId) ? null : d.aiSubtitleId,
+    }
+}
+
 /** Fields with a defaultValue start filled so required selects aren't empty. */
 function initialInput(capabilities: Capabilities): Record<string, unknown> {
     return Object.fromEntries(
@@ -61,7 +90,7 @@ function initialInput(capabilities: Capabilities): Record<string, unknown> {
 }
 
 /** Only fields that apply to the media type, without empty values. */
-function cleanInput(capabilities: Capabilities, mediaType: 'video' | 'photos', input: Record<string, unknown> = {}) {
+function cleanInput(capabilities: Capabilities, mediaType: 'video' | 'photos', input: Record<string, unknown> = {}, photoIds: string[] = []) {
     const cleaned = Object.fromEntries(
         capabilities.fields
             .filter((f) => !f.mediaType || f.mediaType === mediaType)
@@ -69,6 +98,22 @@ function cleanInput(capabilities: Capabilities, mediaType: 'video' | 'photos', i
             .map((f) => [f.name, input[f.name]])
     )
     if (capabilities.platform === 'linkedin' && Array.isArray(input.mentions) && input.mentions.length) cleaned.mentions = input.mentions
+    // Per-slide alt texts, only for the photos this account actually posts.
+    // Media tags: photos are tracked by media id in the draft and sent as this account's slide index.
+    const tagMode = tagModeOf(capabilities, mediaType)
+    if (tagMode !== 'none' && Array.isArray(input.userTags)) {
+        const tags = (input.userTags as DraftUserTag[]).flatMap((tag) => {
+            if (tagMode === 'list') return [{ mediaIndex: 0, username: tag.username }]
+            const mediaIndex = tag.mediaId ? photoIds.indexOf(tag.mediaId) : -1
+            return mediaIndex >= 0 && tag.x !== undefined && tag.y !== undefined ? [{ mediaIndex, username: tag.username, x: tag.x, y: tag.y }] : []
+        })
+        if (tags.length) cleaned.userTags = tags
+    }
+    if (tagMode !== 'none' && Array.isArray(input.taggedUsers) && input.taggedUsers.length) cleaned.taggedUsers = input.taggedUsers
+    if (mediaType === 'photos' && capabilities.perImageAltTextMax && input.altTexts && typeof input.altTexts === 'object') {
+        const alts = Object.entries(input.altTexts as Record<string, string>).filter(([id, text]) => photoIds.includes(id) && text.trim())
+        if (alts.length) cleaned.altTexts = Object.fromEntries(alts)
+    }
     return cleaned
 }
 
@@ -110,7 +155,7 @@ export function ComposeView() {
     const [draft, setDraft] = useState<ComposeDraft>(emptyDraft)
     const [hydrated, setHydrated] = useState(false)
     const [cache, setCache] = useState<Record<string, MediaLite>>({})
-    // connectionId null = the shared thumbnail for all accounts.
+    // connectionId null = the thumbnail pool (multi-select, auto-assigned by shape).
     const [picker, setPicker] = useState<null | { kind: 'video' | 'photos' } | { kind: 'thumbnail'; connectionId: string | null }>(null)
     const [confirmOpen, setConfirmOpen] = useState(false)
     const [scheduleAllOpen, setScheduleAllOpen] = useState(false)
@@ -118,7 +163,7 @@ export function ComposeView() {
     const [dragId, setDragId] = useState<string | null>(null)
     const [aiPicker, setAiPicker] = useState<null | 'json' | 'subtitle'>(null)
     const [generation, setGeneration] = useState<null | { id: string }>(null)
-    const [pendingFill, setPendingFill] = useState<null | { fills: AiFill[]; edited: AiFill[]; issues: AiIssue[] }>(null)
+    const [pendingFill, setPendingFill] = useState<null | { fills: AiFill[]; edited: AiFill[]; issues: AiIssue[]; sources: Record<string, AiSource> }>(null)
     // Set when "Replace" ran, so the dialog's close handler doesn't also apply "Keep Mine".
     const replaced = useRef(false)
 
@@ -138,7 +183,7 @@ export function ComposeView() {
     // Media referenced by a restored draft but not loaded yet.
     const referenced = useMemo(
         () =>
-            [...new Set([draft.videoId, ...draft.photoIds, ...Object.values(draft.thumbnails), draft.thumbnailAll, draft.aiJsonId, draft.aiSubtitleId].filter(Boolean) as string[])].filter(
+            [...new Set([draft.videoId, ...draft.photoIds, ...Object.values(draft.thumbnails), ...draft.thumbnailPool, draft.aiJsonId, draft.aiSubtitleId].filter(Boolean) as string[])].filter(
                 (id) => !cache[id]
             ),
         [draft, cache]
@@ -160,7 +205,14 @@ export function ComposeView() {
     }
     const supports = (connection: Connection) => {
         const caps = capsFor(connection)
-        return caps ? (draft.mediaType === 'video' ? caps.supportsVideo : caps.supportsPhotos) : false
+        if (!caps) return false
+        if (draft.mediaType === 'video') return caps.supportsVideo
+        // carouselMode "manual": Fannout prepares the post, the user publishes it (needs 2+ photos).
+        return caps.supportsPhotos || isManualPost(caps, 'photos', (draft.photoOverrides[connection.id] ?? draft.photoIds).length)
+    }
+    const manualOf = (connection: Connection) => {
+        const caps = capsFor(connection)
+        return Boolean(caps && isManualPost(caps, draft.mediaType, (draft.photoOverrides[connection.id] ?? draft.photoIds).length))
     }
 
     const selected = draft.accountIds
@@ -169,15 +221,100 @@ export function ComposeView() {
     const targets = selected.filter((c) => supports(c) && c.status === 'connected')
     const excluded = selected.filter((c) => !supports(c))
     const video = draft.videoId ? (cache[draft.videoId] ?? null) : null
-    /** A card's own thumbnail, else the shared one. */
-    const thumbnailOf = (connectionId: string) => draft.thumbnails[connectionId] ?? draft.thumbnailAll
-    const sharedThumb = draft.thumbnailAll ? (cache[draft.thumbnailAll] ?? null) : null
+    const thumbPool = draft.thumbnailPool.map((id) => cache[id]).filter((m): m is MediaLite => Boolean(m))
+    /** A card's own thumbnail, else the pool image matching the platform's shape (landscape → YouTube, portrait → Instagram cover). */
+    const thumbnailOf = (connection: Connection) =>
+        draft.thumbnails[connection.id] ?? autoThumbnail(thumbPool, capsFor(connection)?.thumbnailRules?.aspect)?.id ?? null
+    // Thumbnails only exist for platforms whose capabilities say so.
     const thumbTargets = targets.filter((c) => capsFor(c)?.supportsThumbnail)
     const photos = draft.photoIds.map((id) => cache[id]).filter((m): m is MediaLite => Boolean(m))
     const mediaIds = draft.mediaType === 'video' ? (draft.videoId ? [draft.videoId] : []) : draft.photoIds
 
     const update = (patch: Partial<ComposeDraft> | ((d: ComposeDraft) => Partial<ComposeDraft>)) =>
         setDraft((current) => ({ ...current, ...(typeof patch === 'function' ? patch(current) : patch) }))
+
+    // ---------------------------------------------------------------- Uploads
+    // Files picked or dropped on a slot upload in the background; the slot gets the media id right away.
+    const uploads = useUploadActions()
+    const [adding, setAdding] = useState(0)
+    /** Most photos any selected platform takes (extra files get a message, never a silent drop). */
+    const photoLimit = () => {
+        const limits = targets.map((c) => capsFor(c)).filter((c): c is Capabilities => Boolean(c)).map((c) => Math.max(c.maxPhotos, c.carouselMode === 'none' ? 0 : c.carouselMax))
+        return limits.length ? Math.max(...limits) || 20 : 20
+    }
+    const addToSlot = async (slot: UploadSlot, files: File[], connectionId: string | null = null) => {
+        if (files.length === 0) return
+        let chosen = files
+        const single = slot === 'video' || slot === 'json' || slot === 'subtitles' || (slot === 'thumbnail' && connectionId)
+        if (single && files.length > 1) {
+            chosen = files.slice(0, 1)
+            toast.info(`Only one file fits here: added ${files[0]!.name}`)
+        }
+        if (slot === 'photos') {
+            const limit = photoLimit()
+            const room = Math.max(0, limit - draft.photoIds.length)
+            if (files.length > room) {
+                chosen = files.slice(0, room)
+                const left = files.length - chosen.length
+                toast.error(`${left} photo${left === 1 ? ' was' : 's were'} not added`, { description: `The selected platforms take at most ${limit} photos per post.` })
+            }
+        }
+        if (chosen.length === 0) return
+        setAdding((n) => n + chosen.length)
+        try {
+            const added = await uploads.addFiles(chosen, { slot })
+            if (added.length === 0) return
+            remember(added.map((a) => a.lite))
+            const ids = added.map((a) => a.mediaId)
+            const first = ids[0]!
+            if (slot === 'video') update({ videoId: first, folderId: null })
+            else if (slot === 'photos') update((d) => ({ photoIds: [...d.photoIds, ...ids.filter((id) => !d.photoIds.includes(id))], photoOverrides: {}, folderId: null }))
+            else if (slot === 'thumbnail' && connectionId) update((d) => ({ thumbnails: { ...d.thumbnails, [connectionId]: first } }))
+            else if (slot === 'thumbnail') update((d) => ({ thumbnailPool: [...d.thumbnailPool, ...ids.filter((id) => !d.thumbnailPool.includes(id))] }))
+            else if (slot === 'json') update({ aiJsonId: first })
+            else update({ aiSubtitleId: first })
+        } finally {
+            setAdding((n) => n - chosen.length)
+        }
+    }
+
+    // Upload status → slot state: ready swaps in the server view (real URLs), cancelled leaves every slot.
+    const uploadStatuses = useUploadStatuses()
+    useEffect(() => {
+        if (!uploadStatuses) return
+        const byMedia = new Map(uploadStatuses.split(',').map((pair) => pair.split(':') as [string, string]))
+        const cancelled = [...byMedia].filter(([, status]) => status === 'cancelled').map(([id]) => id)
+        if (cancelled.some((id) => referencedIds(draft).includes(id))) update((d) => withoutMedia(d, cancelled))
+        for (const [id, status] of byMedia) {
+            const cached = cache[id]
+            if (!cached || cached.status === status) continue
+            if (status === 'ready') {
+                utils.media.get
+                    .fetch({ mediaId: id }, { staleTime: 0 })
+                    .then((media) => remember([media]))
+                    .catch(() => remember([{ ...cached, status: 'ready' }]))
+            } else if (status === 'processing' || status === 'failed') remember([{ ...cached, status }])
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- react to upload status changes only
+    }, [uploadStatuses])
+
+    // Files uploading elsewhere (another tab, a restored draft): check the server now and then.
+    const foreignInFlight = referencedIds(draft)
+        .filter((id) => isInFlight(cache[id]) && !uploadStatuses.includes(`${id}:`))
+        .join(',')
+    useEffect(() => {
+        if (!foreignInFlight) return
+        const timer = setInterval(() => {
+            for (const mediaId of foreignInFlight.split(',')) {
+                utils.media.get
+                    .fetch({ mediaId }, { staleTime: 0 })
+                    .then((media) => media.status !== 'uploading' && remember([media]))
+                    .catch(() => undefined)
+            }
+        }, 10_000)
+        return () => clearInterval(timer)
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- interval per set of ids
+    }, [foreignInFlight])
 
     // Intent prefetch: warm the picker chunk and its first page of media before it opens.
     const warmPicker = (type: 'video' | 'image') => {
@@ -233,8 +370,8 @@ export function ComposeView() {
             aiSubtitleId: d.aiSubtitleId ?? subtitles?.mediaId ?? null,
             videoId: d.mediaType === 'video' ? (main?.mediaId ?? d.videoId) : d.videoId,
             photoIds: d.mediaType === 'photos' && images.length ? images.map((i) => i.mediaId) : d.photoIds,
-            // The folder's thumbnail becomes the shared one; cards keep their own picks.
-            thumbnailAll: d.thumbnailAll ?? thumb?.mediaId ?? null,
+            // The folder's thumbnail-role images become the pool (primary first); cards keep their own picks.
+            thumbnailPool: d.thumbnailPool.length ? d.thumbnailPool : thumb ? [thumb.mediaId, ...images.filter((i) => i.mediaId !== thumb.mediaId).map((i) => i.mediaId)] : [],
         }))
         toast.success(`Filled from ${folder.name}`)
     }
@@ -252,20 +389,20 @@ export function ComposeView() {
                 ? {
                       thumbnailByConnection: Object.fromEntries(
                           targets
-                              .filter((c) => capsFor(c)?.supportsThumbnail && thumbnailOf(c.id))
-                              .map((c) => [c.id, thumbnailOf(c.id) as string])
+                              .filter((c) => capsFor(c)?.supportsThumbnail && thumbnailOf(c))
+                              .map((c) => [c.id, thumbnailOf(c) as string])
                       ),
                   }
                 : {}),
             targets: targets.map((c) => ({
                 socialConnectionId: c.id,
-                input: cleanInput(capsFor(c)!, draft.mediaType, draft.inputs[c.id]),
+                input: cleanInput(capsFor(c)!, draft.mediaType, draft.inputs[c.id], draft.photoOverrides[c.id] ?? draft.photoIds),
                 ...(draft.mediaType === 'photos' && draft.photoOverrides[c.id] ? { mediaIds: draft.photoOverrides[c.id] } : {}),
                 ...(draft.schedules?.[c.id] ? { schedule: draft.schedules[c.id] } : {}),
             })),
         }),
         // eslint-disable-next-line react-hooks/exhaustive-deps -- derived from draft + loaded lists
-        [draft, connectionsQuery.data, capabilitiesQuery.data]
+        [draft, connectionsQuery.data, capabilitiesQuery.data, cache]
     )
     const debouncedPayload = useDebouncedValue(payload, 500)
     const validate = trpc.posts.validate.useMutation({ onError: () => undefined })
@@ -290,7 +427,16 @@ export function ComposeView() {
 
 
     // ---------------------------------------------------------------- AI
-    const aiEnabled = Boolean(draft.aiJsonId || draft.aiSubtitleId)
+    // Photo posts can be written from the photos alone (vision); JSON and subtitles still come first.
+    const aiPhotoIds = draft.mediaType === 'photos' ? draft.photoIds : []
+    const aiSourcesReady = Boolean(draft.aiJsonId || draft.aiSubtitleId || aiPhotoIds.length)
+    // Vision needs the photos in storage; JSON/SRT are read server-side too. The video only adds local metadata.
+    const aiWaiting = aiPhotoIds.some((id) => isInFlight(cache[id]))
+        ? 'Waiting for photos…'
+        : [draft.aiJsonId, draft.aiSubtitleId].some((id) => id && isInFlight(cache[id]))
+          ? 'Waiting for the JSON / subtitles to upload…'
+          : null
+    const aiEnabled = aiSourcesReady && !aiWaiting
     const aiFieldsOf = (connection: Connection) =>
         (capsFor(connection)?.fields ?? []).filter((f) => f.ai && (!f.mediaType || f.mediaType === draft.mediaType))
     const generate = trpc.ai.generate.useMutation()
@@ -300,7 +446,7 @@ export function ComposeView() {
     )
     const aiBusy = Boolean(generation) || generate.isPending
 
-    const applyFills = (fills: AiFill[], issues: AiIssue[]) =>
+    const applyFills = (fills: AiFill[], issues: AiIssue[], sources: Record<string, AiSource> = {}) =>
         update((d) => {
             const inputs = { ...d.inputs }
             const aiFills = { ...d.aiFills }
@@ -316,7 +462,7 @@ export function ComposeView() {
             for (const issue of issues) {
                 aiIssues[issue.socialConnectionId] = { ...aiIssues[issue.socialConnectionId], [issue.field]: issue.message }
             }
-            return { inputs, aiFills, aiIssues }
+            return { inputs, aiFills, aiIssues, aiSources: { ...d.aiSources, ...sources } }
         })
 
     // Generation finished: fill fields, asking before overwriting anything the user typed.
@@ -336,10 +482,12 @@ export function ComposeView() {
             const byAi = draft.aiFills[fill.connectionId]?.[fill.field]
             return !isEmpty(current) && !sameValue(current, fill.value) && !(byAi && sameValue(current, byAi.value))
         })
-        if (edited.length) setPendingFill({ fills, edited, issues: result.issues })
+        const sources = Object.fromEntries(Object.entries(result.targets).map(([id, meta]) => [id, meta.source]))
+        if (edited.length) setPendingFill({ fills, edited, issues: result.issues, sources })
         else {
-            applyFills(fills, result.issues)
-            toast.success(`AI filled ${fills.length} field${fills.length === 1 ? '' : 's'}`)
+            applyFills(fills, result.issues, sources)
+            if (fills.length) toast.success(`AI filled ${fills.length} field${fills.length === 1 ? '' : 's'} — review before posting`)
+            else toast.error(result.issues[0]?.message ?? 'AI had nothing to fill')
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps -- react to a finished generation only
     }, [generationQuery.data])
@@ -347,16 +495,52 @@ export function ComposeView() {
     const instructionFor = (connectionId: string) => draft.accountInstructions[connectionId]?.trim() || undefined
     const globalInstruction = draft.globalInstruction.trim() || undefined
 
-    const startGeneration = async (requested: { socialConnectionId: string; fields?: string[] }[]) => {
+    /** Tags, collaborators and the related video go to the writers as context only. */
+    const aiContextOf = (connectionId: string) => {
+        const connection = targets.find((c) => c.id === connectionId)
+        const caps = connection ? capsFor(connection) : undefined
+        const input = draft.inputs[connectionId] ?? {}
+        if (!caps) return {}
+        const taggedUsernames = [
+            ...((Array.isArray(input.userTags) ? input.userTags : []) as { username: string }[]),
+            ...((Array.isArray(input.taggedUsers) ? input.taggedUsers : []) as { username: string }[]),
+        ].map((tag) => tag.username)
+        const collaborators = caps.collaborators && Array.isArray(input.collaborators) ? (input.collaborators as string[]) : []
+        const related = input.relatedVideo as { videoId: string; title: string; watchNext?: boolean } | undefined
+        const watchNext =
+            related && related.watchNext !== false && postTypeOf(caps, draft.mediaType, video, 0) === 'video'
+                ? { videoId: related.videoId, title: related.title }
+                : undefined
+        if (!taggedUsernames.length && !collaborators.length && !watchNext) return {}
+        return {
+            context: {
+                ...(taggedUsernames.length ? { taggedUsernames: [...new Set(taggedUsernames)] } : {}),
+                ...(collaborators.length ? { collaborators } : {}),
+                ...(watchNext ? { watchNext } : {}),
+            },
+        }
+    }
+
+    const startGeneration = async (requested: { socialConnectionId: string; fields?: string[]; hookOnly?: boolean; current?: Record<string, string> }[]) => {
         if (!aiEnabled || requested.length === 0) return
         try {
             const { generationId } = await generate.mutateAsync({
                 ...(draft.aiJsonId ? { jsonMediaId: draft.aiJsonId } : {}),
                 ...(draft.aiSubtitleId ? { subtitleMediaId: draft.aiSubtitleId } : {}),
                 ...(draft.mediaType === 'video' && draft.videoId ? { videoMediaId: draft.videoId } : {}),
+                // Still uploading: AI gets the duration/size the browser read.
+                ...(draft.mediaType === 'video' && video && video.status !== 'ready'
+                    ? { videoMeta: { durationSeconds: video.durationSeconds, width: video.width, height: video.height } }
+                    : {}),
+                // Slide order is the order the AI gets.
+                ...(aiPhotoIds.length ? { photoMediaIds: aiPhotoIds } : {}),
                 ...(globalInstruction ? { globalInstruction } : {}),
                 targets: requested.map((target) => ({
                     ...target,
+                    ...aiContextOf(target.socialConnectionId),
+                    ...(aiPhotoIds.length && draft.photoOverrides[target.socialConnectionId]?.length
+                        ? { photoMediaIds: draft.photoOverrides[target.socialConnectionId] }
+                        : {}),
                     ...(instructionFor(target.socialConnectionId) ? { instruction: instructionFor(target.socialConnectionId) } : {}),
                 })),
             })
@@ -399,27 +583,54 @@ export function ComposeView() {
                 }),
         }
     }
+    /** Title / first-line rewrite needs the card's current text (the rest is kept as is). */
+    const regenerateHook = (connection: Connection) =>
+        void startGeneration([
+            {
+                socialConnectionId: connection.id,
+                hookOnly: true,
+                current: Object.fromEntries(
+                    Object.entries(draft.inputs[connection.id] ?? {}).filter((entry): entry is [string, string] => typeof entry[1] === 'string')
+                ),
+            },
+        ])
     const fieldLabel = (fill: AiFill) => {
         const connection = connections.find((c) => c.id === fill.connectionId)
-        const label = connection ? capsFor(connection)?.fields.find((f) => f.name === fill.field)?.label : undefined
+        const label =
+            fill.field === 'altTexts' ? 'Alt texts' : connection ? capsFor(connection)?.fields.find((f) => f.name === fill.field)?.label : undefined
         return `${connection ? accountName(connection) : 'Account'} · ${label ?? fill.field}`
     }
 
     const mediaIssue =
         mediaIds.length === 0 ? (draft.mediaType === 'video' ? 'Pick a video' : 'Pick at least one photo') : null
+    // Durations of files still uploading come from the browser, per platform (the file stays for the others).
+    const localIssues: Issue[] = targets.flatMap((c) =>
+        localMediaIssues(capsFor(c)!, draft.mediaType, video).map((message) => ({ socialConnectionId: c.id, field: 'media', message }))
+    )
+    const allIssues = [...issues, ...localIssues]
+    const postMediaIds = [...mediaIds, ...(draft.mediaType === 'video' ? targets.map(thumbnailOf).filter((id): id is string => Boolean(id)) : [])]
+    const uploadsRunning = postMediaIds.some((id) => isInFlight(cache[id]))
     const batchIssues = issues.filter((i) => !i.socialConnectionId)
     const pendingValidation = validate.isPending || payload !== debouncedPayload
     // Card time wins; "Schedule all" fills the rest; neither = now.
     const scheduleOf = (connectionId: string) => draft.schedules?.[connectionId] ?? draft.scheduleAll ?? null
-    const scheduledCount = targets.filter((c) => scheduleOf(c.id)).length
-    const instantCount = targets.length - scheduledCount
-    const submitLabel = !scheduledCount
-        ? `Post to ${targets.length} Account${targets.length === 1 ? '' : 's'}`
-        : !instantCount
-          ? `Schedule ${scheduledCount}`
-          : `Post ${instantCount} now · Schedule ${scheduledCount}`
+    // Manual posts are saved for the user to publish; they are never scheduled or sent.
+    const manualCount = targets.filter(manualOf).length
+    const scheduledCount = targets.filter((c) => !manualOf(c) && scheduleOf(c.id)).length
+    const instantCount = targets.length - scheduledCount - manualCount
+    const submitLabel =
+        (!scheduledCount
+            ? instantCount
+                ? `Post to ${instantCount} Account${instantCount === 1 ? '' : 's'}`
+                : 'Save Manual Post'
+            : !instantCount
+              ? `Schedule ${scheduledCount}`
+              : `Post ${instantCount} now · Schedule ${scheduledCount}`) + (manualCount && (instantCount || scheduledCount) ? ` · ${manualCount} manual` : '')
+    // Never disabled because files are uploading (the publish job waits for them); only while
+    // freshly picked files are being read and registered, so they aren't left out of the post.
     const canPost =
-        targets.length > 0 && !mediaIssue && issues.length === 0 && !pendingValidation && excluded.length < selected.length
+        targets.length > 0 && !mediaIssue && allIssues.length === 0 && !pendingValidation && excluded.length < selected.length && adding === 0
+    const postLabel = adding ? 'Adding files…' : uploadsRunning ? `${submitLabel} (uploads finishing)` : submitLabel
 
     if (capabilitiesQuery.isPending || connectionsQuery.isPending) {
         return <Skeleton className="h-96 w-full rounded-surface" aria-busy />
@@ -490,7 +701,7 @@ export function ComposeView() {
                             loading={publish.isPending}
                             onClick={() => setConfirmOpen(true)}
                         >
-                            {submitLabel}
+                            {postLabel}
                         </Button>
                         <DropdownMenu>
                             <DropdownMenuTrigger
@@ -547,7 +758,7 @@ export function ComposeView() {
                                     ) : checked && !supports(connection) ? (
                                         <Badge variant="warning">
                                             <TriangleAlertIcon aria-hidden />
-                                            {draft.mediaType === 'video' ? 'No video' : 'No photos'}
+                                            {draft.mediaType === 'video' ? 'No video' : caps?.carouselMode === 'manual' ? 'Needs 2+ photos' : 'No photos'}
                                         </Badge>
                                     ) : null}
                                 </label>
@@ -567,7 +778,7 @@ export function ComposeView() {
                 ) : null}
             </SectionCard>
 
-            <SectionCard step={2} title="Media" description="Pick from your library, or a folder to fill the video, thumbnail and photos at once.">
+            <SectionCard step={2} title="Media" description="Drop files here or choose them: they upload in the background while you write. Or pick from your library, or a folder to fill the video, thumbnail and photos at once.">
                 <div className="flex flex-col gap-4">
                     <ToggleGroup
                         aria-label="Media type"
@@ -585,11 +796,17 @@ export function ComposeView() {
                         </ToggleGroupItem>
                     </ToggleGroup>
 
+                    {adding ? (
+                        <p className="text-meta" aria-live="polite">
+                            {`Adding ${adding} file${adding === 1 ? '' : 's'}…`}
+                        </p>
+                    ) : null}
                     {draft.mediaType === 'video' ? (
-                        <div className="flex flex-wrap items-center gap-4">
+                        <SlotDropTarget label="Video: drop a file here" onFiles={(files) => void addToSlot('video', files)} className="flex flex-wrap items-center gap-4 p-1">
                             {video ? (
-                                <span className="w-48 overflow-hidden rounded-control border border-border">
+                                <span className="relative w-48 overflow-hidden rounded-control border border-border">
                                     <MediaPreview type="video" url={video.url} thumbUrl={video.thumbUrl} alt={video.name} />
+                                    <UploadRing mediaId={video.id} fallbackStatus={video.status} />
                                 </span>
                             ) : null}
                             <div className="flex min-w-0 flex-1 flex-col gap-1">
@@ -603,46 +820,56 @@ export function ComposeView() {
                             <Button variant="secondary" leftIcon={<FilmIcon aria-hidden />} onPointerEnter={() => warmPicker('video')} onFocus={() => warmPicker('video')} onClick={() => setPicker({ kind: 'video' })}>
                                 {video ? 'Change Video' : 'Choose Video'}
                             </Button>
-                        </div>
+                        </SlotDropTarget>
                     ) : null}
 
-                    {draft.mediaType === 'video' ? (
-                        <div className="flex items-center gap-2 rounded-surface border border-border bg-background p-4">
-                            {sharedThumb ? (
-                                <span className="w-16 shrink-0 overflow-hidden rounded-control border border-border">
-                                    <MediaPreview type="image" url={sharedThumb.url} thumbUrl={sharedThumb.thumbUrl} alt={sharedThumb.name} />
-                                </span>
-                            ) : (
+                    {draft.mediaType === 'video' && thumbTargets.length ? (
+                        <SlotDropTarget label="Thumbnails: drop images here" onFiles={(files) => void addToSlot('thumbnail', files)} className="flex flex-col gap-2 border border-border bg-background p-4">
+                            <div className="flex items-center gap-2">
                                 <ImageIcon aria-hidden className="size-4 text-muted-foreground" />
-                            )}
-                            <span className="flex min-w-0 flex-1 flex-col">
-                                <span className="text-label text-foreground">Thumbnail for all accounts</span>
-                                <span className="truncate text-meta">
-                                    {draft.thumbnailAll ? (sharedThumb?.name ?? 'Loading…') : 'None — platform default'}
-                                    {draft.thumbnailAll && thumbTargets.length
-                                        ? ` · ${thumbTargets.filter((c) => !draft.thumbnails[c.id]).length} of ${thumbTargets.length} account${thumbTargets.length === 1 ? '' : 's'} use it`
-                                        : ''}
-                                    {targets.length && !thumbTargets.length ? ' · none of the selected accounts take a thumbnail' : ''}
+                                <span className="flex min-w-0 flex-1 flex-col">
+                                    <span className="text-label text-foreground">Thumbnails (optional)</span>
+                                    <span className="text-meta">
+                                        {`For ${thumbTargets.map((c) => capsFor(c)?.label).filter((label, i, all) => all.indexOf(label) === i).join(', ')}. Pick several: landscape images go to landscape platforms, portrait ones to vertical covers. Each card can pick its own.`}
+                                    </span>
                                 </span>
-                            </span>
-                            {draft.thumbnailAll ? (
-                                <Button
-                                    variant="ghost"
-                                    size="icon-sm"
-                                    aria-label="Remove the thumbnail for all accounts"
-                                    onClick={() => update({ thumbnailAll: null })}
-                                >
-                                    <XIcon aria-hidden />
+                                <Button variant="secondary" size="sm" onPointerEnter={() => warmPicker('image')} onFocus={() => warmPicker('image')} onClick={() => setPicker({ kind: 'thumbnail', connectionId: null })}>
+                                    {thumbPool.length ? 'Change' : 'Choose'}
                                 </Button>
+                            </div>
+                            {thumbPool.length ? (
+                                <ul className="flex flex-wrap gap-2" aria-label="Picked thumbnails">
+                                    {thumbPool.map((thumb) => {
+                                        const users = thumbTargets.filter((c) => thumbnailOf(c) === thumb.id)
+                                        return (
+                                            <li key={thumb.id} className="flex w-32 flex-col gap-1">
+                                                <span className="relative overflow-hidden rounded-control border border-border">
+                                                    <MediaPreview type="image" url={thumb.url} thumbUrl={thumb.thumbUrl} alt={thumb.name} />
+                                                    <UploadRing mediaId={thumb.id} fallbackStatus={thumb.status} />
+                                                    <span className="absolute top-1 end-1">
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="icon-sm"
+                                                            aria-label={`Remove ${thumb.name}`}
+                                                            onClick={() => update((d) => ({ thumbnailPool: d.thumbnailPool.filter((id) => id !== thumb.id) }))}
+                                                        >
+                                                            <XIcon aria-hidden />
+                                                        </Button>
+                                                    </span>
+                                                </span>
+                                                <span className="text-meta">
+                                                    {`${thumb.orientation ?? 'unknown shape'} · ${users.length ? users.map((c) => capsFor(c)?.label).join(', ') : 'not used'}`}
+                                                </span>
+                                            </li>
+                                        )
+                                    })}
+                                </ul>
                             ) : null}
-                            <Button variant="secondary" size="sm" onPointerEnter={() => warmPicker('image')} onFocus={() => warmPicker('image')} onClick={() => setPicker({ kind: 'thumbnail', connectionId: null })}>
-                                {draft.thumbnailAll ? 'Change' : 'Choose'}
-                            </Button>
-                        </div>
+                        </SlotDropTarget>
                     ) : null}
 
                     {draft.mediaType === 'photos' ? (
-                        <div className="flex flex-col gap-4">
+                        <SlotDropTarget label="Photos: drop images here" onFiles={(files) => void addToSlot('photos', files)} className="flex flex-col gap-4 p-1">
                             {photos.length ? (
                                 <ol className="flex flex-wrap gap-2" aria-label="Carousel order (drag to reorder)">
                                     {photos.map((photo, index) => (
@@ -667,6 +894,7 @@ export function ComposeView() {
                                             )}
                                         >
                                             <MediaPreview type="image" url={photo.url} thumbUrl={photo.thumbUrl} alt={photo.name} />
+                                            <UploadRing mediaId={photo.id} fallbackStatus={photo.status} />
                                             <span className="absolute top-1 start-1 flex items-center gap-1 rounded-control bg-popover px-1 text-mono">
                                                 <GripVerticalIcon aria-hidden className="size-3" />
                                                 {index + 1}
@@ -687,10 +915,10 @@ export function ComposeView() {
                             ) : null}
                             <div>
                                 <Button variant="secondary" leftIcon={<ImagesIcon aria-hidden />} onPointerEnter={() => warmPicker('image')} onFocus={() => warmPicker('image')} onClick={() => setPicker({ kind: 'photos' })}>
-                                    {photos.length ? 'Change Photos' : 'Choose Photos'}
+                                    {photos.length ? 'Add Photos' : 'Choose Photos'}
                                 </Button>
                             </div>
-                        </div>
+                        </SlotDropTarget>
                     ) : null}
                     {mediaIssue && selected.length ? <p className="text-meta">{mediaIssue}.</p> : null}
                     {batchIssues.map((issue) => (
@@ -705,7 +933,7 @@ export function ComposeView() {
                 <SectionCard
                     step={3}
                     title="AI sources (optional)"
-                    description="Pick a social JSON and/or subtitles to let AI write titles and captions. Nothing is posted automatically."
+                    description="Pick a social JSON and/or subtitles to let AI write titles and captions; photo posts can also be written from the photos. AI only fills the cards below — nothing is posted automatically."
                     action={
                         <Tooltip>
                             {/* Disabled buttons get no pointer events, so the span carries the tooltip (and focus while disabled). */}
@@ -722,8 +950,10 @@ export function ComposeView() {
                                 </Button>
                             </TooltipTrigger>
                             <TooltipContent>
-                                {!aiEnabled
-                                    ? 'Choose a social JSON or subtitles first'
+                                {aiWaiting
+                                    ? aiWaiting
+                                    : !aiEnabled
+                                    ? 'Choose a social JSON, subtitles or photos first'
                                     : aiTargets.length === 0
                                       ? 'None of the selected accounts have AI fields'
                                       : `Fill titles and descriptions for ${aiTargets.length} account${aiTargets.length === 1 ? '' : 's'}`}
@@ -738,8 +968,16 @@ export function ComposeView() {
                                 { kind: 'subtitle', label: 'Subtitles', icon: CaptionsIcon, id: draft.aiSubtitleId },
                             ] as const
                         ).map(({ kind, label, icon: Icon, id }) => (
-                            <div key={kind} className="flex items-center gap-2 rounded-surface border border-border bg-background p-4">
-                                <Icon aria-hidden className="size-4 text-muted-foreground" />
+                            <SlotDropTarget
+                                key={kind}
+                                label={`${label}: drop a file here`}
+                                onFiles={(files) => void addToSlot(kind === 'json' ? 'json' : 'subtitles', files)}
+                                className="flex items-center gap-2 border border-border bg-background p-4"
+                            >
+                                <span className="relative flex size-8 shrink-0 items-center justify-center">
+                                    <Icon aria-hidden className="size-4 text-muted-foreground" />
+                                    {id ? <UploadRing mediaId={id} fallbackStatus={cache[id]?.status} /> : null}
+                                </span>
                                 <span className="flex min-w-0 flex-1 flex-col">
                                     <span className="text-label text-foreground">{label}</span>
                                     <span className="truncate text-meta">{id ? (cache[id]?.name ?? 'Loading…') : 'None'}</span>
@@ -757,7 +995,7 @@ export function ComposeView() {
                                 <Button variant="secondary" size="sm" onClick={() => setAiPicker(kind)}>
                                     {id ? 'Change' : 'Choose'}
                                 </Button>
-                            </div>
+                            </SlotDropTarget>
                         ))}
                     </div>
                 </SectionCard>
@@ -770,8 +1008,8 @@ export function ComposeView() {
                     </h2>
                     {targets.map((connection) => {
                         const caps = capsFor(connection)!
-                        const textField = textFieldOf(caps)
-                        const thumbId = thumbnailOf(connection.id)
+                        const textField = textFieldOf(caps, draft.mediaType)
+                        const thumbId = thumbnailOf(connection)
                         const ownThumb = Boolean(draft.thumbnails[connection.id])
                         return (
                             <AccountCard
@@ -780,7 +1018,7 @@ export function ComposeView() {
                                 capabilities={caps}
                                 mediaType={draft.mediaType}
                                 input={draft.inputs[connection.id] ?? {}}
-                                issues={issues.filter((i) => i.socialConnectionId === connection.id)}
+                                issues={allIssues.filter((i) => i.socialConnectionId === connection.id)}
                                 video={video}
                                 thumbnail={thumbId ? (cache[thumbId] ?? null) : null}
                                 photos={photos}
@@ -794,7 +1032,7 @@ export function ComposeView() {
                                     }))
                                 }
                                 onPickThumbnail={() => setPicker({ kind: 'thumbnail', connectionId: connection.id })}
-                                thumbnailInherited={!ownThumb && Boolean(draft.thumbnailAll)}
+                                thumbnailInherited={!ownThumb && Boolean(thumbId)}
                                 onResetThumbnail={
                                     ownThumb
                                         ? () =>
@@ -806,6 +1044,14 @@ export function ComposeView() {
                                         : undefined
                                 }
                                 aiFor={aiFor(connection)}
+                                aiSource={draft.aiSources[connection.id]}
+                                aiBusy={aiBusy}
+                                onRegenerate={
+                                    aiEnabled && aiFieldsOf(connection).length
+                                        ? () => void startGeneration([withInstructions(connection.id)])
+                                        : undefined
+                                }
+                                onRegenerateHook={aiEnabled && aiFieldsOf(connection).length ? () => regenerateHook(connection) : undefined}
                                 instruction={draft.accountInstructions[connection.id] ?? ''}
                                 onInstructionChange={
                                     aiFieldsOf(connection).length
@@ -846,7 +1092,7 @@ export function ComposeView() {
                                 }
                                 onCopyFrom={(sourceId) => {
                                     const source = targets.find((c) => c.id === sourceId)
-                                    const sourceField = source ? textFieldOf(capsFor(source)!) : undefined
+                                    const sourceField = source ? textFieldOf(capsFor(source)!, draft.mediaType) : undefined
                                     const value = sourceField ? draft.inputs[sourceId]?.[sourceField.name] : undefined
                                     if (!textField || typeof value !== 'string') return toast.error('Nothing to copy')
                                     const text = textField.maxLength ? value.slice(0, textField.maxLength) : value
@@ -867,6 +1113,7 @@ export function ComposeView() {
                 type="video"
                 title="Choose a video"
                 initial={video ? [video] : []}
+                onFiles={(files) => void addToSlot('video', files)}
                 onPick={([item]) => {
                     if (!item) return
                     remember([item])
@@ -881,6 +1128,7 @@ export function ComposeView() {
                 multiple
                 title="Choose photos"
                 initial={photos}
+                onFiles={(files) => void addToSlot('photos', files)}
                 onPick={(items) => {
                     remember(items)
                     update({ photoIds: items.map((m) => m.id), photoOverrides: {}, folderId: null })
@@ -891,13 +1139,43 @@ export function ComposeView() {
                 open={picker?.kind === 'thumbnail'}
                 onOpenChange={(open) => !open && setPicker(null)}
                 type="image"
-                title="Choose a thumbnail"
-                onPick={([item]) => {
-                    if (!item || picker?.kind !== 'thumbnail') return
-                    remember([item])
+                multiple={picker?.kind === 'thumbnail' && picker.connectionId === null}
+                title={picker?.kind === 'thumbnail' && picker.connectionId ? 'Choose a thumbnail' : 'Choose thumbnails'}
+                initial={picker?.kind === 'thumbnail' && picker.connectionId === null ? thumbPool : []}
+                onFiles={(files) => void addToSlot('thumbnail', files, picker?.kind === 'thumbnail' ? picker.connectionId : null)}
+                onPick={(items) => {
+                    if (picker?.kind !== 'thumbnail') return
+                    remember(items)
                     const id = picker.connectionId
-                    update((d) => (id ? { thumbnails: { ...d.thumbnails, [id]: item.id } } : { thumbnailAll: item.id }))
+                    const [item] = items
+                    if (!id) update({ thumbnailPool: items.map((m) => m.id) })
+                    else if (item) update((d) => ({ thumbnails: { ...d.thumbnails, [id]: item.id } }))
                 }}
+                onFolder={
+                    picker?.kind === 'thumbnail' && picker.connectionId === null
+                        ? async (folderId) => {
+                              // The folder's "thumbnail" role, primary first.
+                              const { items } = await utils.folders.items.fetch({ folderId, role: 'thumbnail' })
+                              if (!items.length) return toast.error('That folder has no thumbnails')
+                              const sorted = [...items].sort((x, y) => Number(y.isPrimary) - Number(x.isPrimary) || x.position - y.position)
+                              remember(
+                                  sorted.map((item) => ({
+                                      id: item.media.id,
+                                      name: item.media.name,
+                                      type: item.media.type,
+                                      status: item.media.status,
+                                      url: item.media.previewUrl,
+                                      thumbUrl: item.media.thumbUrl,
+                                      orientation: item.media.orientation,
+                                      durationSeconds: item.media.durationSeconds,
+                                      width: item.media.width,
+                                      height: item.media.height,
+                                  }))
+                              )
+                              update({ thumbnailPool: sorted.map((item) => item.mediaId) })
+                          }
+                        : undefined
+                }
             />
 
             <MediaPickerDialog
@@ -905,6 +1183,7 @@ export function ComposeView() {
                 onOpenChange={(open) => !open && setAiPicker(null)}
                 type={aiPicker ?? 'json'}
                 title={aiPicker === 'subtitle' ? 'Choose subtitles' : 'Choose a social JSON'}
+                onFiles={(files) => void addToSlot(aiPicker === 'subtitle' ? 'subtitles' : 'json', files)}
                 onPick={([item]) => {
                     if (!item) return
                     remember([item])
@@ -946,7 +1225,8 @@ export function ComposeView() {
                     const kept = new Set(pendingFill.edited.map((f) => `${f.connectionId}:${f.field}`))
                     applyFills(
                         pendingFill.fills.filter((f) => !kept.has(`${f.connectionId}:${f.field}`)),
-                        pendingFill.issues
+                        pendingFill.issues,
+                        pendingFill.sources
                     )
                     setPendingFill(null)
                 }}
@@ -961,7 +1241,7 @@ export function ComposeView() {
                 confirmLabel="Replace"
                 onConfirm={() => {
                     if (!pendingFill) return
-                    applyFills(pendingFill.fills, pendingFill.issues)
+                    applyFills(pendingFill.fills, pendingFill.issues, pendingFill.sources)
                     replaced.current = true
                 }}
             />
@@ -981,7 +1261,7 @@ export function ComposeView() {
             <ConfirmDialog
                 open={confirmOpen}
                 onOpenChange={setConfirmOpen}
-                title={scheduledCount ? `${submitLabel}?` : `Post to ${targets.length} account${targets.length === 1 ? '' : 's'}?`}
+                title={`${submitLabel}?`}
                 description={
                     <span className="flex flex-col gap-2">
                         <span className="flex flex-col">
@@ -989,7 +1269,7 @@ export function ComposeView() {
                                 const s = scheduleOf(c.id)
                                 return (
                                     <span key={c.id}>
-                                        {`${accountName(c)} (${capsFor(c)?.label}) — ${s ? formatScheduled(s.at, s.timezone) : 'now'}`}
+                                        {`${accountName(c)} (${capsFor(c)?.label}) — ${manualOf(c) ? 'manual post: saved for you to publish' : s ? formatScheduled(s.at, s.timezone) : 'now'}`}
                                     </span>
                                 )
                             })}
@@ -997,17 +1277,34 @@ export function ComposeView() {
                         {billed.length ? (
                             <span>X posts are billed per post on your X API plan.</span>
                         ) : null}
-                        <span>Publishing continues in the background — you can close this tab.</span>
+                        {uploadsRunning ? (
+                            <span>
+                                Some files are still uploading. Keep Fannout open in this tab until they finish (you can move to other pages); each
+                                post publishes as soon as its files are ready.
+                            </span>
+                        ) : (
+                            <span>Publishing continues in the background — you can close this tab.</span>
+                        )}
                     </span>
                 }
                 confirmLabel={submitLabel}
                 onConfirm={async () => {
                     try {
                         const result = await publish.mutateAsync(payload)
+                        // The posts list shows "Uploading 45%" for posts whose files are still on their way.
+                        uploads.linkPosts(postMediaIds, result.posts.map((post) => post.id))
                         clearDraft()
                         setDraft(emptyDraft())
                         toast.success(
-                            result.replayed ? 'Already posted — showing that batch' : scheduledCount ? 'Scheduled' : 'Publishing started'
+                            result.replayed
+                                ? 'Already posted — showing that batch'
+                                : scheduledCount
+                                  ? 'Scheduled'
+                                  : instantCount
+                                    ? uploadsRunning
+                                        ? 'Posted: publishing starts when uploads finish'
+                                        : 'Publishing started'
+                                    : 'Saved — publish it yourself, then mark it as posted'
                         )
                         router.push(`/posts/batch/${result.batchId}`)
                     } catch {

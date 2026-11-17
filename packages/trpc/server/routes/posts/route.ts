@@ -33,8 +33,10 @@ import {
   UpdateResultSchema,
 } from "@repo/services/post-actions/model";
 import {
+  completeRelatedVideoTask,
   getBatch,
   listBatches,
+  markManualPosted,
   publishBatch,
   retryPost,
   validatePublishBatch,
@@ -43,6 +45,8 @@ import {
   BatchPageSchema,
   BatchViewSchema,
   ListBatchesInputSchema,
+  ManualPostedInputSchema,
+  PostTaskResultSchema,
   PublishBatchInputSchema,
   PublishBatchResultSchema,
   ValidationResultSchema,
@@ -169,6 +173,20 @@ export const postsRouter = router({
     .input(ListBatchesInputSchema)
     .output(BatchPageSchema)
     .query(({ ctx, input }) => listBatches(ctx.dbUserId, input)),
+
+  /** A manual post (e.g. a YouTube image post) was published by hand: mark it published, optionally with its link. */
+  markManualPosted: scoped("posts:write")
+    .meta({ openapi: { method: "POST", path: "/posts/{postId}/manual-posted", summary: "Mark a manual post as posted (optionally with its URL)", protect: true } })
+    .input(ManualPostedInputSchema)
+    .output(PostTaskResultSchema)
+    .mutation(({ ctx, input }) => markManualPosted(ctx.dbUserId, input)),
+
+  /** "Mark done" on the "Set related video in YouTube Studio" task. */
+  completeRelatedVideo: scoped("posts:write")
+    .meta({ openapi: { method: "POST", path: "/posts/{postId}/tasks/related-video/done", summary: "Mark the YouTube related-video task as done", protect: true } })
+    .input(PostIdInputSchema)
+    .output(PostTaskResultSchema)
+    .mutation(({ ctx, input }) => completeRelatedVideoTask(ctx.dbUserId, input.postId)),
 
   /** Failed posts only: re-queue and re-send post/publish.requested. */
   retry: rateLimited(scoped("posts:write"), "publish")

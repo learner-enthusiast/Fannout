@@ -1,6 +1,7 @@
 import {
   createMentionContact,
   deleteMentionContact,
+  resolveXUser,
   searchMentionContacts,
   updateMentionContact,
 } from "@repo/services/mentions";
@@ -9,11 +10,13 @@ import {
   MentionContactPageSchema,
   MentionContactViewSchema,
   MentionIdInputSchema,
+  ResolveXUserInputSchema,
+  ResolvedXUserSchema,
   SearchMentionsInputSchema,
   UpdateMentionInputSchema,
   UpdatedMentionSchema,
 } from "@repo/services/mentions/model";
-import { router, scoped } from "../../trpc";
+import { rateLimited, router, scoped } from "../../trpc";
 
 export const mentionsRouter = router({
   search: scoped("posts:read")
@@ -33,6 +36,13 @@ export const mentionsRouter = router({
     .input(UpdateMentionInputSchema)
     .output(MentionContactViewSchema)
     .mutation(({ ctx, input }) => updateMentionContact(ctx.dbUserId, input)),
+
+  /** X tags need user ids. The X lookup is billed, so the id is saved on the contact and never fetched twice. */
+  resolveX: rateLimited(scoped("posts:write"), "publish")
+    .meta({ openapi: { method: "POST", path: "/mentions/x/resolve", summary: "Resolve an X username to its user ID for media tags (saved; looked up once)", protect: true } })
+    .input(ResolveXUserInputSchema)
+    .output(ResolvedXUserSchema)
+    .mutation(({ ctx, input }) => resolveXUser(ctx.dbUserId, input)),
 
   delete: scoped("posts:write")
     .meta({ openapi: { method: "DELETE", path: "/mentions/{id}", summary: "Delete a saved mention contact", protect: true } })

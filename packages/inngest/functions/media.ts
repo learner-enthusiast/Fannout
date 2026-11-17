@@ -1,8 +1,9 @@
-import { downloadObjectAsBuffer, getDownloadUrl, headObject, uploadObject } from "@repo/s3";
+import { downloadObjectAsBuffer, getDownloadUrl, headObject, readObjectHead, uploadObject } from "@repo/s3";
 import { orientationOf } from "@repo/services/media/model";
 import { probeMedia } from "@repo/services/media/probe";
 import { parseSocialPackage } from "@repo/services/media/social-package";
 import { InvalidSubtitleError, subtitleFormat, summarizeSubtitles } from "@repo/services/media/subtitles";
+import { checkSniffed, SNIFF_BYTES } from "@repo/services/media/sniff";
 import { refreshFolderSuggestion } from "@repo/services/media/suggestions";
 import { generateThumbnail, thumbnailKeyFor } from "@repo/services/media/thumbnail";
 import {
@@ -18,7 +19,7 @@ import {
 import { NonRetriableError } from "inngest";
 import { z } from "zod";
 import { inngest } from "../client";
-import { mediaUploadCompleted, mediaUploadFailed, notificationCreate } from "../events";
+import { mediaFailed, mediaReady, mediaUploadCompleted, mediaUploadFailed, notificationCreate } from "../events";
 
 const label = (name: string | null | undefined) => name || "Your file";
 
@@ -61,6 +62,7 @@ export const processMedia = inngest.createFunction(
         const failed = await markMediaFailed(mediaId, message);
         return { name: failed?.name ?? null };
       });
+      await step.sendEvent("media-failed", mediaFailed.create({ mediaId, userId, reason: message.slice(0, 300) }, { id: `media-failed:${mediaId}` }));
       await step.sendEvent(
         "notify-failed",
         notificationCreate.create({
@@ -101,6 +103,15 @@ export const processMedia = inngest.createFunction(
       const head = await headObject(media.s3Key, { bucket: media.s3Bucket });
       if (!head) throw new NonRetriableError("Uploaded file was not found in storage");
       return { contentLength: head.contentLength, contentType: head.contentType };
+    });
+
+    // Real type from the first bytes: never trust the extension or the browser's mime type.
+    const sniffedMime = await step.run("sniff-type", async () => {
+      const head = await readObjectHead(media.s3Key, SNIFF_BYTES, { bucket: media.s3Bucket });
+      if (!head) throw new NonRetriableError("Uploaded file was not found in storage");
+      const checked = checkSniffed(media.type, head);
+      if ("error" in checked) throw new NonRetriableError(checked.error);
+      return checked.mimeType ?? null;
     });
 
     const analysis = await step.run("analyze", async (): Promise<ReadyUpdate & { socialPackage: boolean }> => {
@@ -162,8 +173,10 @@ export const processMedia = inngest.createFunction(
 
     const { socialPackage, ...update } = analysis;
     await step.run("mark-ready", async () => {
-      await markMediaReady(mediaId, update);
+      await markMediaReady(mediaId, { ...update, ...(sniffedMime && sniffedMime !== media.mimeType ? { mimeType: sniffedMime } : {}) });
     });
+    // Posts created before the upload finished are waiting on this (publish-post "await-media").
+    await step.sendEvent("media-ready", mediaReady.create({ mediaId, userId }, { id: `media-ready:${mediaId}` }));
 
     // Best effort and after "ready": a failed thumbnail must never fail or delay an upload.
     if (media.type === "video" || media.type === "image") {
@@ -224,6 +237,7 @@ export const onUploadFailed = inngest.createFunction(
   { id: "on-upload-failed", triggers: [mediaUploadFailed], retries: 3 },
   async ({ event, step }) => {
     const { mediaId, userId, error } = event.data;
+    await step.sendEvent("media-failed", mediaFailed.create({ mediaId, userId, reason: error.slice(0, 300) }, { id: `media-failed:${mediaId}` }));
     const row = await step.run("load-media", async () => {
       const current = await getMediaForProcessing(mediaId);
       return { filename: current?.name ?? null };
@@ -261,6 +275,7 @@ export const cleanupStaleUploads = inngest.createFunction(
       );
       if (!changed) continue;
       expired += 1;
+      await step.sendEvent(`media-failed-${item.id}`, mediaFailed.create({ mediaId: item.id, userId: item.userId, reason: "Upload interrupted" }, { id: `media-failed:${item.id}` }));
       await step.sendEvent(
         `notify-${item.id}`,
         notificationCreate.create({

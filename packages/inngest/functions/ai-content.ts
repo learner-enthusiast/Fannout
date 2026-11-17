@@ -1,9 +1,11 @@
 import {
+  finishGeneration,
   generationErrorCode,
   isPermanentGenerationError,
   markGenerationFailed,
   markGenerationRunning,
-  runGenerationJob,
+  prepareGenerationJob,
+  writeGenerationTarget,
 } from "@repo/services/ai-content";
 import { NonRetriableError } from "inngest";
 import { z } from "zod";
@@ -11,12 +13,16 @@ import { inngest } from "../client";
 import { aiContentGenerateRequested } from "../events";
 
 /**
- * ai/content.generate.requested → load sources (JSON first, then subtitles),
- * build the v1 prompt, generate, validate/repair, save.
+ * ai/content.generate.requested →
+ *   "brief"    Stage 1: one brief per set of inputs (cached by input hash)
+ *   "write-N"  Stage 2 + 3: one step per account, in parallel — platform
+ *              playbook, code validation, one repair, trim
+ *   "finish"   totals + notes
  *
- * Load → prompt → generate → validate run inside ONE step on purpose: Inngest
- * persists every step's return value, and source text / generated copy must
- * not end up in run history. Only ids and counts leave the step.
+ * Inngest persists every step's return value, and source text / generated
+ * copy must not end up in run history: the brief and the copy are written to
+ * ai_generations inside their step, and steps return only ids, counts and
+ * limit notes.
  */
 export const generateContent = inngest.createFunction(
   {
@@ -38,9 +44,9 @@ export const generateContent = inngest.createFunction(
     const claimed = await step.run("mark-running", () => markGenerationRunning(generationId));
     if (!claimed) return { skipped: true };
 
-    return step.run("generate", async () => {
+    const guarded = async <T>(work: () => Promise<T>): Promise<T> => {
       try {
-        return await runGenerationJob(generationId);
+        return await work();
       } catch (error) {
         if (isPermanentGenerationError(error)) {
           await markGenerationFailed(generationId, generationErrorCode(error), (error as Error).message);
@@ -48,6 +54,14 @@ export const generateContent = inngest.createFunction(
         }
         throw error;
       }
-    });
+    };
+
+    const brief = await step.run("brief", () => guarded(() => prepareGenerationJob(generationId)));
+    const writers = await Promise.all(
+      Array.from({ length: brief.targets }, (_, index) =>
+        step.run(`write-${index + 1}`, () => guarded(() => writeGenerationTarget(generationId, index))),
+      ),
+    );
+    return step.run("finish", () => finishGeneration(generationId, { brief, writers }));
   },
 );

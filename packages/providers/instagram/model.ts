@@ -6,6 +6,7 @@ import {
   INSTAGRAM_CAROUSEL_MAX,
   INSTAGRAM_CAROUSEL_MIN,
   INSTAGRAM_COLLABORATORS_MAX,
+  INSTAGRAM_USER_TAGS_MAX,
   INSTAGRAM_HASHTAGS_MAX,
   INSTAGRAM_IMAGE,
   INSTAGRAM_MENTIONS_MAX,
@@ -41,6 +42,9 @@ export type InstagramContainerStatus = z.infer<typeof InstagramContainerStatusSc
 
 const url = z.url();
 
+/** Image tags need a position: x from the left, y from the top, both 0.0–1.0. */
+const ImageUserTagSchema = z.object({ username: InstagramUsernameSchema, x: z.number().min(0).max(1), y: z.number().min(0).max(1) });
+
 export const CreateReelContainerInputSchema = z.object({
   media_type: z.literal("REELS"),
   video_url: url,
@@ -50,6 +54,8 @@ export const CreateReelContainerInputSchema = z.object({
   cover_url: url.optional(),
   thumb_offset: z.number().int().nonnegative().optional(),
   collaborators: z.array(InstagramUsernameSchema).max(INSTAGRAM_COLLABORATORS_MAX).optional(),
+  /** Videos take usernames only: x/y do not apply and must not be sent. */
+  user_tags: z.array(z.object({ username: InstagramUsernameSchema }).strict()).max(INSTAGRAM_USER_TAGS_MAX).optional(),
 });
 export type CreateReelContainerInput = z.input<typeof CreateReelContainerInputSchema>;
 
@@ -57,19 +63,31 @@ export const CreateImageContainerInputSchema = z.object({
   image_url: url,
   caption: z.string().max(INSTAGRAM_CAPTION_MAX).optional(),
   alt_text: z.string().max(INSTAGRAM_ALT_TEXT_MAX).optional(),
+  collaborators: z.array(InstagramUsernameSchema).max(INSTAGRAM_COLLABORATORS_MAX).optional(),
+  user_tags: z.array(ImageUserTagSchema).max(INSTAGRAM_USER_TAGS_MAX).optional(),
 });
 export type CreateImageContainerInput = z.input<typeof CreateImageContainerInputSchema>;
 
 /** Carousel child: an image or a video, never captioned. */
 export const CreateCarouselItemInputSchema = z.union([
-  z.object({ image_url: url, alt_text: z.string().max(INSTAGRAM_ALT_TEXT_MAX).optional() }),
-  z.object({ media_type: z.literal("VIDEO"), video_url: url }),
+  z.object({
+    image_url: url,
+    alt_text: z.string().max(INSTAGRAM_ALT_TEXT_MAX).optional(),
+    user_tags: z.array(ImageUserTagSchema).max(INSTAGRAM_USER_TAGS_MAX).optional(),
+  }),
+  z.object({
+    media_type: z.literal("VIDEO"),
+    video_url: url,
+    user_tags: z.array(z.object({ username: InstagramUsernameSchema }).strict()).max(INSTAGRAM_USER_TAGS_MAX).optional(),
+  }),
 ]);
 export type CreateCarouselItemInput = z.input<typeof CreateCarouselItemInputSchema>;
 
 export const CreateCarouselContainerInputSchema = z.object({
   children: z.array(z.string().min(1)).min(INSTAGRAM_CAROUSEL_MIN).max(INSTAGRAM_CAROUSEL_MAX),
   caption: z.string().max(INSTAGRAM_CAPTION_MAX).optional(),
+  /** user_tags never go on the parent — only on each child. */
+  collaborators: z.array(InstagramUsernameSchema).max(INSTAGRAM_COLLABORATORS_MAX).optional(),
 });
 export type CreateCarouselContainerInput = z.input<typeof CreateCarouselContainerInputSchema>;
 
@@ -120,6 +138,16 @@ export const InstagramCaptionSchema = z
   .refine((v) => countMatches(v, HASHTAG) <= INSTAGRAM_HASHTAGS_MAX, `Use at most ${INSTAGRAM_HASHTAGS_MAX} hashtags`)
   .refine((v) => countMatches(v, MENTION) <= INSTAGRAM_MENTIONS_MAX, `Mention at most ${INSTAGRAM_MENTIONS_MAX} accounts`);
 
+const round4 = (n: number) => Math.round(n * 10_000) / 10_000;
+
+export const InstagramUserTagSchema = z.object({
+  mediaIndex: z.number().int().min(0).max(INSTAGRAM_CAROUSEL_MAX - 1).describe("Which media item of this account's post, in its order (0 for a single photo or a Reel)."),
+  username: InstagramUsernameSchema.describe("Instagram username without @ (letters, numbers, . and _, 1–30 characters)."),
+  x: z.number().min(0).max(1).transform(round4).optional().describe("Photos only: horizontal position from the left, 0.0–1.0."),
+  y: z.number().min(0).max(1).transform(round4).optional().describe("Photos only: vertical position from the top, 0.0–1.0."),
+});
+export type InstagramUserTag = z.infer<typeof InstagramUserTagSchema>;
+
 export const InstagramComposeInputSchema = z.object({
   caption: composeField(InstagramCaptionSchema.optional(), {
     label: "Caption",
@@ -150,13 +178,25 @@ export const InstagramComposeInputSchema = z.object({
     countMode: "chars",
     maxLength: INSTAGRAM_ALT_TEXT_MAX,
     mediaType: "photos",
+    ai: true,
   }),
-  collaborators: composeField(z.array(InstagramUsernameSchema).max(INSTAGRAM_COLLABORATORS_MAX).optional(), {
+  /** Per-photo alt text, edited under each slide in the composer (not a generic compose control). */
+  altTexts: z
+    .record(z.uuid(), z.string().max(INSTAGRAM_ALT_TEXT_MAX))
+    .optional()
+    .describe("Photos only: media ID → alt text for that photo (max 1,000 characters each). Wins over altText for the photos it names."),
+  collaborators: composeField(z.array(InstagramUsernameSchema).max(INSTAGRAM_COLLABORATORS_MAX, `Invite at most ${INSTAGRAM_COLLABORATORS_MAX} collaborators`).optional(), {
     label: "Collaborators",
-    description: "Reels only: up to 3 Instagram usernames to invite as collaborators (no @).",
+    description: "Up to 3 Instagram usernames to invite as collaborators on a photo, carousel or Reel (no @). Each one must accept the invite in Instagram.",
     kind: "tags",
-    mediaType: "video",
+    helper: "Each collaborator must accept the invite in Instagram.",
   }),
+  /** People tagged on the media, edited with the card's "Tag people" control (not a generic compose field). */
+  userTags: z
+    .array(InstagramUserTagSchema)
+    .max(INSTAGRAM_USER_TAGS_MAX * INSTAGRAM_CAROUSEL_MAX)
+    .optional()
+    .describe("People tagged on the media (public accounts only), at most 20 per media item and no username twice on the same item. Photos: x and y are required. Reels: username only, never x/y."),
 });
 export type InstagramComposeInput = z.infer<typeof InstagramComposeInputSchema>;
 
@@ -172,7 +212,15 @@ export const INSTAGRAM_COMPOSE: ComposeCapabilities = {
   supportsPhotos: true,
   maxPhotos: INSTAGRAM_CAROUSEL_MAX,
   minCarousel: 1,
+  carouselMode: "api",
+  carouselMax: INSTAGRAM_CAROUSEL_MAX,
+  // user_tags: images take { username, x, y }, Reels { username } only; carousels tag each child.
+  tagging: { image: "positioned", video: "list", max: INSTAGRAM_USER_TAGS_MAX, needsUserId: false },
+  collaborators: { max: INSTAGRAM_COLLABORATORS_MAX },
   supportsThumbnail: true,
+  // cover_url on the REELS container.
+  thumbnailRules: { maxBytes: INSTAGRAM_IMAGE.maxBytes, mimeTypes: [...INSTAGRAM_IMAGE.mimeTypes], aspect: "portrait", recommended: "1080×1920 (9:16)" },
+  perImageAltTextMax: INSTAGRAM_ALT_TEXT_MAX,
   mediaRules: {
     maxVideoBytes: INSTAGRAM_REEL.maxBytes,
     minVideoSeconds: INSTAGRAM_REEL.minSeconds,

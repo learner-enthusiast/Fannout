@@ -192,6 +192,20 @@ export async function downloadObjectAsBuffer(
   return Buffer.concat(chunks);
 }
 
+/** First `bytes` of an object (Range GET), e.g. to sniff its real file type. Null when missing. */
+export async function readObjectHead(key: string, bytes: number, options: BucketOption = {}): Promise<Buffer | null> {
+  try {
+    const result = await getS3Client().send(
+      new GetObjectCommand({ Bucket: options.bucket ?? defaultBucket(), Key: assertSafeKey(key), Range: `bytes=0-${Math.max(0, bytes - 1)}` }),
+    );
+    if (!result.Body) return null;
+    return Buffer.from(await result.Body.transformToByteArray());
+  } catch (error) {
+    if (error instanceof NoSuchKey || error instanceof NotFound) return null;
+    throw error;
+  }
+}
+
 /** Delete one object. Succeeds even if it didn't exist (S3 semantics). */
 export async function deleteObject(key: string, options: BucketOption = {}): Promise<void> {
   await getS3Client().send(

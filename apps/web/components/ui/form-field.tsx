@@ -21,6 +21,8 @@ export type FormFieldCounter = {
     /** chars = graphemes (default), bytes = UTF-8, weighted = your `weigh` fn */
     mode?: CounterMode
     weigh?: (value: string) => number
+    /** Target band (e.g. what AI aims for): shown as count / min–max / limit. */
+    band?: { min: number; max: number }
 }
 
 /**
@@ -85,7 +87,14 @@ export function FormField({
                         : 'Characters used'}
                     :{' '}
                 </span>
-                {count.toLocaleString()} / {counter.limit.toLocaleString()}
+                {count.toLocaleString()} /{' '}
+                {counter.band ? (
+                    <>
+                        <span className="sr-only">target </span>
+                        {counter.band.min.toLocaleString()}–{counter.band.max.toLocaleString()} /{' '}
+                    </>
+                ) : null}
+                {counter.limit.toLocaleString()}
             </span>
         )
     }

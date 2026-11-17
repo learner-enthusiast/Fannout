@@ -47,3 +47,14 @@ lists > 30 items are virtualized; no backdrop-blur; animations ≤ 150 ms.
 - Overlays use opacity + small scale only: 150 ms open, 100 ms close, solid token
   backgrounds, a single `shadow-float`. Never animate height/width/filter.
 - Polling uses `refetchInterval` without `refetchIntervalInBackground` (pauses in hidden tabs).
+
+## Compose: capabilities only
+
+- The composer decides everything from `platforms.capabilities`: which cards show "Tag people"
+  (`tagging`), a collaborators list (`collaborators`), a "Manual post" badge (`carouselMode`), a
+  thumbnail step or per-slide alt text. Never branch on a platform name in a component.
+- Tag and collaborator pickers reuse the mention contacts (`mentions.search`) plus free text
+  (`components/compose/tag-editor.tsx`). Lookups that cost money (X user ids) run once per new username,
+  at selection time.
+- Manual steps (manual posts, "Set related video in YouTube Studio") are shown on the post with their own
+  buttons; they never disable or delay the Post button.

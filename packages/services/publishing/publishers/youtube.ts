@@ -1,5 +1,5 @@
-import type { YouTubeProvider } from "@repo/providers";
-import type { YouTubeComposeInput } from "@repo/providers/youtube";
+import { utf8Length, type YouTubeProvider } from "@repo/providers";
+import { YOUTUBE_COMPOSE, type YouTubeComposeInput, type YouTubeRelatedVideo } from "@repo/providers/youtube";
 import { readRange } from "../upload/chunk-reader";
 import { UPLOAD_CONFIG, pollDelaySeconds } from "../upload/config";
 import {
@@ -16,6 +16,8 @@ import {
 import { streamSource } from "./media-source";
 import type { PublishContext, Publisher } from "./types";
 
+/** Same limit as the compose model's description field. */
+const YOUTUBE_DESCRIPTION_MAX_BYTES = 5000;
 const shortUrl = (videoId: string) => `https://youtu.be/${videoId}`;
 const CHUNK = UPLOAD_CONFIG.YOUTUBE_CHUNK_BYTES;
 
@@ -27,6 +29,30 @@ const CHUNK = UPLOAD_CONFIG.YOUTUBE_CHUNK_BYTES;
  * Scheduled posts upload as PRIVATE so nothing is public before the time.
  * finalize: privacy flip (full status resent), thumbnail + playlist as warnings.
  */
+/** Vertical and at most the Shorts length: YouTube publishes it as a Short. */
+export function isYouTubeShort(ctx: Pick<PublishContext, "media">): boolean {
+  const video = ctx.media[0];
+  const max = YOUTUBE_COMPOSE.mediaRules.shortMaxSeconds;
+  return Boolean(video && max && video.metadata?.orientation === "portrait" && (video.durationSeconds ?? Infinity) <= max);
+}
+
+export const watchNextLine = (related: Pick<YouTubeRelatedVideo, "videoId" | "title">) =>
+  `Watch next: ${related.title.replace(/[<>]/g, "")} https://youtu.be/${related.videoId}`;
+
+/**
+ * Long-form only: "Watch next: <title> https://youtu.be/<id>" just above the hashtags line.
+ * Never on Shorts (description links aren't clickable there), never twice, and never when it
+ * would push the description over the limit — the follow-up task covers that case.
+ */
+export function withWatchNext(description: string, related: YouTubeRelatedVideo | undefined, short: boolean): { description: string; added: boolean } {
+  if (!related || related.watchNext === false || short) return { description, added: false };
+  if (description.includes(`youtu.be/${related.videoId}`) || description.includes(`v=${related.videoId}`)) return { description, added: true };
+  const lines = description.trimEnd().split("\n");
+  const hashtags = lines.length && /^(#[\p{L}\p{N}_]+\s*)+$/u.test(lines.at(-1)!.trim()) ? lines.pop()! : null;
+  const next = [lines.join("\n").trimEnd(), watchNextLine(related), ...(hashtags ? [hashtags] : [])].filter(Boolean).join("\n\n");
+  return utf8Length(next) <= YOUTUBE_DESCRIPTION_MAX_BYTES ? { description: next, added: true } : { description, added: false };
+}
+
 export const youtubePublisher: Publisher<YouTubeProvider> = {
   async prepare(provider, ctx): Promise<PrepareStep> {
     // Uploaded by the pre-chunking flow: nothing left to prepare.
@@ -102,6 +128,10 @@ async function uploadStep(provider: YouTubeProvider, ctx: PublishContext, start:
   let progress = start;
 
   if (!progress.sessionRef) {
+    const short = isYouTubeShort(ctx);
+    const watchNext = withWatchNext(input.description ?? "", input.relatedVideo, short);
+    // Remembered for the "Set related video in YouTube Studio" task shown after publishing.
+    if (input.relatedVideo) await ctx.save({ isShort: short, watchNextAdded: watchNext.added });
     const privacyStatus = ctx.scheduled ? "private" : input.privacyStatus;
     await ctx.save({}, ctx.scheduled ? "Uploading video to YouTube (private until the scheduled time)" : "Uploading video to YouTube");
     const { sessionUrl } = await provider.createResumableUpload({
@@ -112,7 +142,7 @@ async function uploadStep(provider: YouTubeProvider, ctx: PublishContext, start:
       requestBody: {
         snippet: {
           title: input.title,
-          description: input.description ?? "",
+          description: watchNext.description,
           ...(input.tags?.length ? { tags: input.tags } : {}),
           ...(input.categoryId ? { categoryId: input.categoryId } : {}),
         },

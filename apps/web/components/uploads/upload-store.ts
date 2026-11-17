@@ -5,29 +5,38 @@ import type { UploadItem, UploadStatus } from './upload-provider'
 /** Progress ticks reach subscribers at most this often (≤ 5/s). */
 const PROGRESS_FLUSH_MS = 200
 
-export const ACTIVE_STATUSES: UploadStatus[] = ['queued', 'uploading', 'processing']
+/** Bytes still have to move (or the file is being read): keep the tab open. */
+export const TRANSFER_STATUSES: UploadStatus[] = ['preparing', 'queued', 'uploading', 'paused', 'needs_file']
+/** Not finished yet (includes server-side processing). */
+export const ACTIVE_STATUSES: UploadStatus[] = [...TRANSFER_STATUSES, 'processing']
+
+type Live = Pick<UploadItem, 'progress' | 'speed' | 'etaSeconds'>
 
 /**
- * External store for upload items. High-frequency state (byte progress) lives
- * here, NOT in React context, so only components that subscribe through a
- * selector re-render on a tick.
+ * External store for upload items. High-frequency state (byte progress,
+ * speed) lives here, NOT in React context or page state, so only components
+ * that subscribe through a selector (progress rings, the tray) re-render on a tick.
  */
 export function createUploadStore() {
     let items: UploadItem[] = []
     const listeners = new Set<() => void>()
-    // Progress waiting for the next flush: itemId → 0..1.
-    const pendingProgress = new Map<string, number>()
+    const pending = new Map<string, Live>()
     let timer: ReturnType<typeof setTimeout> | null = null
 
     const emit = () => listeners.forEach((listener) => listener())
 
-    function flushProgress() {
+    const applyPending = (current: UploadItem[]) => {
+        if (pending.size === 0) return current
+        const live = new Map(pending)
+        pending.clear()
+        return current.map((item) => (live.has(item.id) ? { ...item, ...live.get(item.id)! } : item))
+    }
+
+    function flush() {
         if (timer) clearTimeout(timer)
         timer = null
-        if (pendingProgress.size === 0) return
-        const pending = new Map(pendingProgress)
-        pendingProgress.clear()
-        items = items.map((item) => (pending.has(item.id) ? { ...item, progress: pending.get(item.id)! } : item))
+        if (pending.size === 0) return
+        items = applyPending(items)
         emit()
     }
 
@@ -43,16 +52,13 @@ export function createUploadStore() {
         update(updater: (current: UploadItem[]) => UploadItem[]) {
             if (timer) clearTimeout(timer)
             timer = null
-            const pending = new Map(pendingProgress)
-            pendingProgress.clear()
-            const base = pending.size ? items.map((item) => (pending.has(item.id) ? { ...item, progress: pending.get(item.id)! } : item)) : items
-            items = updater(base)
+            items = updater(applyPending(items))
             emit()
         },
-        /** Progress-only patch, throttled. */
-        setProgress(id: string, progress: number) {
-            pendingProgress.set(id, progress)
-            if (!timer) timer = setTimeout(flushProgress, PROGRESS_FLUSH_MS)
+        /** Progress / speed only, throttled to PROGRESS_FLUSH_MS. */
+        setLive(id: string, live: Live) {
+            pending.set(id, live)
+            if (!timer) timer = setTimeout(flush, PROGRESS_FLUSH_MS)
         },
     }
 }

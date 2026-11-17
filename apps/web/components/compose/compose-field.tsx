@@ -25,6 +25,7 @@ import {
 } from '~/components/ui/tooltip'
 import { xWeight, type ComposeField } from '~/lib/compose'
 import { MentionTextarea, type MentionRange } from './mention-editor'
+import { RelatedVideoPicker, type RelatedVideo } from './related-video-picker'
 import { trpc } from '~/trpc/client'
 
 const NONE = '__none__'
@@ -139,6 +140,8 @@ export function ComposeFieldControl({
     mentionsEnabled = false,
     mentions = [],
     onMentionsChange,
+    band,
+    short = false,
 }: {
     field: ComposeField
     value: unknown
@@ -151,6 +154,10 @@ export function ComposeFieldControl({
     mentionsEnabled?: boolean
     mentions?: MentionRange[]
     onMentionsChange?: (ranges: MentionRange[]) => void
+    /** Length band AI aims for (counter shows current / band / limit). */
+    band?: { min: number; max: number }
+    /** The video publishes as a Short (changes what a related video can do). */
+    short?: boolean
 }) {
     const showAi = Boolean(field.ai && ai?.enabled)
     const playlists = trpc.platforms.youtubePlaylists.useQuery(
@@ -170,9 +177,10 @@ export function ComposeFieldControl({
                   limit: field.maxLength,
                   mode: field.countMode ?? 'chars',
                   ...(field.countMode === 'weighted' ? { weigh: xWeight } : {}),
+                  band,
               }
             : field.kind === 'tags' && field.maxLength
-              ? { value: Array.isArray(value) ? value.join(',') : '', limit: field.maxLength }
+              ? { value: Array.isArray(value) ? value.join(',') : '', limit: field.maxLength, band }
               : undefined
 
     if (field.kind === 'toggle') {
@@ -258,6 +266,16 @@ export function ComposeFieldControl({
                                 required={false}
                                 loading={playlists.isLoading}
                                 onChange={onChange}
+                            />
+                        )
+                    case 'relatedVideo':
+                        return (
+                            <RelatedVideoPicker
+                                id={p.id}
+                                socialConnectionId={socialConnectionId}
+                                value={value && typeof value === 'object' ? (value as RelatedVideo) : undefined}
+                                onChange={onChange}
+                                short={short}
                             />
                         )
                     case 'radio':

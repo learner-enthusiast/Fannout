@@ -5,7 +5,10 @@ Product name: **Fannout** (double n).
 ## Mandatory conventions — read before adding any endpoint, list, page or delete
 
 - [docs/conventions/api.md](docs/conventions/api.md) — pagination (cursor, max 10),
-  nested collections, idempotent deletes, typed error codes, Inngest for platform calls.
+  nested collections, idempotent deletes, typed error codes, Inngest for platform calls,
+  AI copy (playbook + length-targets entry + PROMPT_VERSION per platform/post type),
+  capabilities as the single source for carousel mode / tagging, manual steps that never block publishing.
+  Uploads: one picker for every slot, media row from init, posts before media is ready (publish waits on `media/ready`), never disable Post for uploads.
 - [docs/conventions/frontend.md](docs/conventions/frontend.md) — `useInfiniteList` +
   `<InfiniteList>`, optimistic mutations, ConfirmDialog + kebab menus for destructive actions.
 - UI work also follows [apps/web/DESIGN.md](apps/web/DESIGN.md).

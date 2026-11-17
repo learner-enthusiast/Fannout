@@ -85,20 +85,37 @@ export const AiTargetSchema = z.object({
   /** Omit for every AI field of the platform. */
   fields: z.array(z.string().min(1)).min(1).max(10).optional().describe("Compose fields to fill (see each platform's ai fields); omit for all of them."),
   instruction: z.string().trim().max(500).optional().describe("Instructions for this account only; combined with globalInstruction and wins on conflicts."),
+  photoMediaIds: z.array(z.uuid()).min(1).max(20).optional().describe("Photo posts: this account's subset/order of photoMediaIds (same as targets[].mediaIds when publishing)."),
+  context: z.object({
+    taggedUsernames: z.array(z.string().trim().min(1).max(60)).max(40).optional().describe("People already tagged on this account's media (usernames without @)."),
+    collaborators: z.array(z.string().trim().min(1).max(60)).max(10).optional().describe("Collaborators invited on this post."),
+    watchNext: z.object({
+      videoId: z.string().regex(/^[A-Za-z0-9_-]{11}$/).describe("YouTube video ID."),
+      title: z.string().trim().min(1).max(200).describe("Its title."),
+    }).optional().describe("YouTube long-form only: the related video; a \"Watch next\" line is added above the hashtags and counted in the description band."),
+  }).optional().describe("Context only. AI may mention a tagged person naturally once, but never invents tags or adds people you didn't choose."),
+  hookOnly: z.boolean().optional().describe("Rewrite only the title (YouTube) or the first line of the main text; needs `current`."),
+  current: z.record(z.string(), z.string().max(70_000)).optional().describe("hookOnly: the account's current compose text by field name, so the rest of the text is kept."),
 });
 
 /** Route input (no refinements: the OpenAPI generator can't omit fields from refined objects). */
 export const GenerateInputBaseSchema = z.object({
-  jsonMediaId: z.uuid().optional().describe("Social-package JSON media to write from. jsonMediaId or subtitleMediaId is required."),
-  subtitleMediaId: z.uuid().optional().describe("Subtitle media (.srt/.vtt) to write from. jsonMediaId or subtitleMediaId is required."),
-  videoMediaId: z.uuid().optional().describe("Video the content is for (adds its duration/orientation as context)."),
+  jsonMediaId: z.uuid().optional().describe("Social-package JSON media to write from (first priority: the author's draft). One of jsonMediaId, subtitleMediaId or photoMediaIds is required."),
+  subtitleMediaId: z.uuid().optional().describe("Subtitle media (.srt/.vtt) to write from (second priority; the only source of chapter timestamps)."),
+  photoMediaIds: z.array(z.uuid()).min(1).max(20).optional().describe("Photo posts: the photos in slide order. AI looks at the first 10 (downscaled) and writes image/carousel copy and alt texts."),
+  videoMediaId: z.uuid().optional().describe("Video the content is for (adds its duration/orientation as context). May still be uploading or processing; then send videoMeta."),
+  videoMeta: z.object({
+    durationSeconds: z.number().nonnegative().nullable().describe("Video length in seconds as read locally."),
+    width: z.number().int().positive().nullable().describe("Pixel width as read locally."),
+    height: z.number().int().positive().nullable().describe("Pixel height as read locally."),
+  }).optional().describe("Duration and size of a video that hasn't finished processing (read by the client); ignored once the video is ready."),
   targets: z.array(AiTargetSchema).min(1).max(20).describe("Accounts (and fields) to generate for."),
   globalInstruction: z.string().trim().max(500).optional().describe("Instructions applied to every target, e.g. a required title prefix; cannot override facts or platform limits."),
 });
 
-export const NO_SOURCE_MESSAGE = "Pick a social JSON or subtitles to generate from";
+export const NO_SOURCE_MESSAGE = "Pick a social JSON, subtitles or photos to generate from";
 
-export const GenerateInputSchema = GenerateInputBaseSchema.refine((v) => v.jsonMediaId || v.subtitleMediaId, {
+export const GenerateInputSchema = GenerateInputBaseSchema.refine((v) => v.jsonMediaId || v.subtitleMediaId || v.photoMediaIds?.length, {
   message: NO_SOURCE_MESSAGE,
   path: ["jsonMediaId"],
 });
@@ -118,7 +135,13 @@ export const GenerationViewSchema = z.object({
   status: GenerationStatusSchema.describe("Poll until succeeded or failed."),
   /** { [connectionId]: { [field]: value } } */
   output: z.record(z.string(), z.record(z.string(), z.unknown())).nullable().describe("socialConnectionId → field → generated value; review before publishing."),
-  issues: z.array(GenerationIssueSchema).describe("Fields that could not be generated within limits."),
+  issues: z.array(GenerationIssueSchema).describe("Notes per field: shortened to fit, shorter than the target band, or could not be generated."),
+  targets: z.record(z.string(), z.object({
+    platform: z.string().describe("Platform key."),
+    postType: z.enum(["video", "short", "image", "carousel"]).describe("Playbook used: video, short (Shorts/Reels), image or carousel."),
+    source: z.enum(["json", "srt", "photos"]).describe("Main source the copy was written from."),
+    promptVersion: z.string().describe("Version of the playbook prompt."),
+  })).describe("socialConnectionId → how that account's copy was written."),
   error: z.object({
     code: z.string().describe("Error code."),
     message: z.string().describe("Error message."),

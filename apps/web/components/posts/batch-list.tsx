@@ -9,6 +9,7 @@ import { Button } from '~/components/ui/button'
 import { EmptyState } from '~/components/ui/empty-state'
 import { Skeleton } from '~/components/ui/skeleton'
 import { StatusBadge } from '~/components/ui/status-badge'
+import { BatchPublishingBadge } from './batch-status'
 import { trpc } from '~/trpc/client'
 import { InfiniteList } from '~/components/infinite-list'
 import { infiniteOptions, useInfiniteList } from '~/hooks/use-infinite-list'
@@ -25,7 +26,7 @@ export function ComposeButton() {
 
 /** Batches newest first (cursor pagination, loads more on scroll). */
 export function BatchList() {
-    const [filter, setFilter] = useState<'all' | 'scheduled'>('all')
+    const [filter, setFilter] = useState<'all' | 'scheduled' | 'manual'>('all')
     const batchesQuery = trpc.posts.batches.useInfiniteQuery(
         { filter },
         infiniteOptions({
@@ -45,10 +46,11 @@ export function BatchList() {
             <ToggleGroup
                 aria-label="Filter posts"
                 value={[filter]}
-                onValueChange={(value: string[]) => value[0] && setFilter(value[0] as 'all' | 'scheduled')}
+                onValueChange={(value: string[]) => value[0] && setFilter(value[0] as 'all' | 'scheduled' | 'manual')}
             >
                 <ToggleGroupItem value="all">All</ToggleGroupItem>
                 <ToggleGroupItem value="scheduled">Scheduled</ToggleGroupItem>
+                <ToggleGroupItem value="manual">Manual pending</ToggleGroupItem>
             </ToggleGroup>
             <InfiniteList
                 list={list}
@@ -75,8 +77,10 @@ export function BatchList() {
                             {batch.posts.some((p) => p.status === 'scheduled' && p.schedule?.status === 'scheduled') &&
                             !batch.posts.some((p) => ['queued', 'publishing'].includes(p.status)) ? (
                                 <StatusBadge status="pending" label={`${batch.posts.filter((p) => p.status === 'scheduled').length} scheduled`} />
+                            ) : batch.posts.some((p) => p.manual?.status === 'pending') && batch.finished ? (
+                                <StatusBadge status="pending" label={`${batch.posts.filter((p) => p.manual?.status === 'pending').length} manual pending`} />
                             ) : !batch.finished ? (
-                                <StatusBadge status="processing" label="Publishing" />
+                                <BatchPublishingBadge postIds={batch.posts.map((p) => p.id)} />
                             ) : batch.counts.failed ? (
                                 <StatusBadge status="failed" label={`${batch.counts.failed} failed`} />
                             ) : (

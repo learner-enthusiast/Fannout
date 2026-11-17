@@ -42,6 +42,8 @@ const tone: Record<Notification['type'], { icon: LucideIcon; className: string; 
     post_edited: { icon: CircleCheckIcon, className: 'text-success', label: 'Edited' },
     post_edit_failed: { icon: CircleAlertIcon, className: 'text-destructive', label: 'Failed' },
     connection_removed: { icon: CircleAlertIcon, className: 'text-destructive', label: 'Reconnect required' },
+    post_task: { icon: TriangleAlertIcon, className: 'text-warning', label: 'To do' },
+    post_warning: { icon: TriangleAlertIcon, className: 'text-warning', label: 'Needs attention' },
 }
 
 function NotificationRow({

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { composeField, xWeightedLength, type ComposeCapabilities } from "../common/compose";
 import { MediaSourceSchema } from "../common/media";
-import { X_LIMITS, X_MAX_MEDIA_PER_POST, X_POLL, X_POST_MAX_CHARS } from "./constants";
+import { X_LIMITS, X_MAX_MEDIA_PER_POST, X_POLL, X_POST_MAX_CHARS, X_TAG_MAX } from "./constants";
 
 /*
  * Zod schemas for XProvider. Option names are the XDK camelCase names
@@ -453,6 +453,11 @@ export const X_COMPOSE: ComposeCapabilities = {
   supportsPhotos: true,
   maxPhotos: X_MAX_MEDIA_PER_POST,
   minCarousel: 1,
+  carouselMode: "api",
+  carouselMax: X_MAX_MEDIA_PER_POST,
+  // POST /2/tweets media.tagged_user_ids takes user IDS; the API doesn't restrict the media type.
+  tagging: { image: "list", video: "list", max: X_TAG_MAX, needsUserId: true },
+  collaborators: null,
   supportsThumbnail: false,
   mediaRules: { maxVideoBytes: 512 * 1024 * 1024, maxVideoSeconds: 140, maxImageBytes: 5 * 1024 * 1024, billed: true },
   // DELETE /2/tweets/{id} (tweet.write) — https://docs.x.com/x-api/posts/delete-post
@@ -462,6 +467,12 @@ export const X_COMPOSE: ComposeCapabilities = {
   editableFields: [],
   editNote: "The X API can't edit published posts. Delete and repost instead.",
 };
+
+export const XTaggedUserSchema = z.object({
+  username: XUsernameSchema.describe("X username without @."),
+  xUserId: XIdSchema.describe("That account's numeric X user ID (from POST /mentions/x/resolve)."),
+});
+export type XTaggedUser = z.infer<typeof XTaggedUserSchema>;
 
 export const XComposeReplySettingsSchema = z.enum(["everyone", "following", "mentionedUsers", "verified", "subscribers"]).default("everyone");
 
@@ -485,5 +496,12 @@ export const XComposeInputSchema = z.object({
   }),
   madeWithAi: composeField(z.boolean().optional(), { label: "Made with AI", description: "Label the media as made with AI.", kind: "toggle" }),
   paidPartnership: composeField(z.boolean().optional(), { label: "Paid partnership", description: "Label the post as a paid partnership.", kind: "toggle" }),
+  /** Media tags, edited with the card's "Tag people" control (not a generic compose field). */
+  taggedUsers: z
+    .array(XTaggedUserSchema)
+    .max(X_TAG_MAX, `Tag at most ${X_TAG_MAX} people`)
+    .refine((tags) => new Set(tags.map((t) => t.username.toLowerCase())).size === tags.length, "Each person can be tagged once")
+    .optional()
+    .describe("People tagged on the post's media (images or a video), at most 10; separate from @mentions in the text. Resolve each username with POST /mentions/x/resolve first. If X rejects the tags, Fannout posts once more without them and notifies you."),
 });
 export type XComposeInput = z.infer<typeof XComposeInputSchema>;

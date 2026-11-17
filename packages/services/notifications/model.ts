@@ -14,6 +14,10 @@ export const NotificationTypeSchema = z.enum([
   "post_edited",
   "post_edit_failed",
   "connection_removed",
+  /** A manual step is waiting (e.g. set a related video in YouTube Studio). */
+  "post_task",
+  /** Published, but something optional was left out (e.g. X tags). */
+  "post_warning",
 ]);
 export type NotificationType = z.infer<typeof NotificationTypeSchema>;
 

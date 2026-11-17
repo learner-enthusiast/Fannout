@@ -1,7 +1,8 @@
 'use client'
 
 import { format } from 'date-fns'
-import { ExternalLinkIcon, RotateCcwIcon } from 'lucide-react'
+import { CheckIcon, ExternalLinkIcon, HandIcon, RotateCcwIcon } from 'lucide-react'
+import { useState } from 'react'
 import Link from 'next/link'
 import { toast } from 'sonner'
 
@@ -9,13 +10,17 @@ import { providers } from '~/components/connections/providers'
 import { PageHeader } from '~/components/layout/page-header'
 import { Alert, AlertDescription, AlertTitle } from '~/components/ui/alert'
 import { Avatar, AvatarFallback, AvatarImage } from '~/components/ui/avatar'
+import { Badge } from '~/components/ui/badge'
 import { Button } from '~/components/ui/button'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '~/components/ui/dialog'
+import { FormField } from '~/components/ui/form-field'
+import { Input } from '~/components/ui/input'
 import { Card, CardContent } from '~/components/ui/card'
 import { Skeleton } from '~/components/ui/skeleton'
 import { normalizeTRPCError } from '~/lib/error'
 import { trpc } from '~/trpc/client'
 
-import { PostStatusBadge } from './batch-status'
+import { PostStatusBadge, PostStepText } from './batch-status'
 import { PostActions, PostActionState } from './post-actions'
 import { onlyWaitingOnSchedule, ScheduleActions, ScheduleSummary } from './schedule-actions'
 
@@ -41,6 +46,23 @@ export function BatchDetail({ batchId }: { batchId: string }) {
         onSuccess: () => {
             toast.success('Retrying')
             void utils.posts.batch.invalidate({ batchId })
+        },
+    })
+
+    // Manual steps: tracked on the post, never part of the publish job.
+    const [marking, setMarking] = useState<string | null>(null)
+    const [manualUrl, setManualUrl] = useState('')
+    const markPosted = trpc.posts.markManualPosted.useMutation({
+        onSuccess: () => {
+            toast.success('Marked as posted')
+            refresh()
+            void utils.posts.batches.invalidate()
+        },
+    })
+    const relatedDone = trpc.posts.completeRelatedVideo.useMutation({
+        onSuccess: () => {
+            toast.success('Marked done')
+            refresh()
         },
     })
 
@@ -85,12 +107,67 @@ export function BatchDetail({ batchId }: { batchId: string }) {
                                         <span className="text-meta">
                                             {post.deleteErrorMessage ??
                                                 post.editErrorMessage ??
-                                                (post.status === 'failed' ? (post.errorMessage ?? 'Failed') : (post.step ?? 'Waiting'))}
+                                                (post.status === 'failed'
+                                                    ? (post.errorMessage ?? 'Failed')
+                                                    : post.manual?.status === 'pending'
+                                                      ? 'Publish it yourself, then mark it as posted'
+                                                      : <PostStepText postId={post.id} fallback={post.step ?? 'Waiting'} />)}
                                         </span>
                                         <ScheduleSummary post={post} />
+                                        {post.warning ? <span className="text-meta text-warning">{post.warning}</span> : null}
+                                        {post.relatedVideo && post.status === 'published' ? (
+                                            <span className="flex flex-wrap items-center gap-2 text-meta">
+                                                {post.relatedVideo.status === 'done'
+                                                    ? `Related video set: ${post.relatedVideo.title}`
+                                                    : `To do: set related video in YouTube Studio → ${post.relatedVideo.title}`}
+                                                {post.relatedVideo.status === 'pending' ? (
+                                                    <>
+                                                        {post.relatedVideo.studioUrl ? (
+                                                            <Button
+                                                                variant="secondary"
+                                                                size="sm"
+                                                                nativeButton={false}
+                                                                leftIcon={<ExternalLinkIcon aria-hidden />}
+                                                                render={<a href={post.relatedVideo.studioUrl} target="_blank" rel="noreferrer" />}
+                                                            >
+                                                                Open YouTube Studio
+                                                            </Button>
+                                                        ) : null}
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="sm"
+                                                            leftIcon={<CheckIcon aria-hidden />}
+                                                            loading={relatedDone.isPending && relatedDone.variables?.postId === post.id}
+                                                            onClick={() => relatedDone.mutate({ postId: post.id })}
+                                                        >
+                                                            Mark Done
+                                                        </Button>
+                                                    </>
+                                                ) : null}
+                                            </span>
+                                        ) : null}
                                     </div>
-                                    <PostStatusBadge status={post.status} />
+                                    {post.manual?.status === 'pending' ? (
+                                        <Badge variant="warning">
+                                            <HandIcon aria-hidden />
+                                            Manual pending
+                                        </Badge>
+                                    ) : null}
+                                    {post.manual?.status === 'pending' ? null : <PostStatusBadge status={post.status} />}
                                     <PostActionState post={post} />
+                                    {post.manual?.status === 'pending' ? (
+                                        <Button
+                                            variant="primary"
+                                            size="sm"
+                                            leftIcon={<CheckIcon aria-hidden />}
+                                            onClick={() => {
+                                                setManualUrl('')
+                                                setMarking(post.id)
+                                            }}
+                                        >
+                                            Mark As Posted
+                                        </Button>
+                                    ) : null}
                                     {post.postUrl ? (
                                         <Button
                                             variant="ghost"
@@ -126,6 +203,39 @@ export function BatchDetail({ batchId }: { batchId: string }) {
                     </ul>
                 </CardContent>
             </Card>
+            <Dialog open={marking !== null} onOpenChange={(open) => !open && !markPosted.isPending && setMarking(null)}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>Mark as posted?</DialogTitle>
+                        <DialogDescription>Do this after you published the post yourself. The link is optional.</DialogDescription>
+                    </DialogHeader>
+                    <form
+                        className="flex flex-col gap-4"
+                        onSubmit={async (e) => {
+                            e.preventDefault()
+                            if (!marking) return
+                            try {
+                                await markPosted.mutateAsync({ postId: marking, ...(manualUrl.trim() ? { postUrl: manualUrl.trim() } : {}) })
+                                setMarking(null)
+                            } catch {
+                                // The global mutation handler shows the error toast.
+                            }
+                        }}
+                    >
+                        <FormField label="Post link" helper="e.g. https://www.youtube.com/post/…">
+                            {(p) => <Input {...p} type="url" value={manualUrl} onChange={(e) => setManualUrl(e.target.value)} placeholder="https://www.youtube.com/post/…" />}
+                        </FormField>
+                        <DialogFooter>
+                            <Button variant="secondary" onClick={() => setMarking(null)}>
+                                Cancel
+                            </Button>
+                            <Button type="submit" variant="primary" loading={markPosted.isPending}>
+                                Mark As Posted
+                            </Button>
+                        </DialogFooter>
+                    </form>
+                </DialogContent>
+            </Dialog>
         </>
     )
 }

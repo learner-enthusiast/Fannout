@@ -17,6 +17,16 @@ export const mediaUploadFailed = eventType("media/upload.failed", {
   schema: z.object({ mediaId: z.uuid(), userId: z.uuid(), error: z.string() }),
 });
 
+/** process-media finished: the media is "ready". publish-post waits on it (step.waitForEvent). */
+export const mediaReady = eventType("media/ready", {
+  schema: z.object({ mediaId: z.uuid(), userId: z.uuid() }),
+});
+
+/** The media will never become ready (bad file, cancelled, expired). */
+export const mediaFailed = eventType("media/failed", {
+  schema: z.object({ mediaId: z.uuid(), userId: z.uuid(), reason: z.string() }),
+});
+
 export const NotificationEventSchema = z.object({
   userId: z.uuid(),
   type: NotificationTypeSchema,

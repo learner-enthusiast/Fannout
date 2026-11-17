@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { composeField, utf8Length, type ComposeCapabilities } from "../common/compose";
+import { composeField, NO_TAGGING, utf8Length, type ComposeCapabilities } from "../common/compose";
 import { graphCursorFields, graphFields, graphListSchema, NO_BEFORE_AND_AFTER, noBeforeAndAfter } from "../common/meta-graph";
 import {
   THREADS_ALT_TEXT_MAX,
@@ -603,6 +603,10 @@ export const THREADS_COMPOSE: ComposeCapabilities = {
   supportsPhotos: true,
   maxPhotos: THREADS_CAROUSEL.max,
   minCarousel: 1,
+  carouselMode: "api",
+  carouselMax: THREADS_CAROUSEL.max,
+  tagging: NO_TAGGING,
+  collaborators: null,
   supportsThumbnail: false,
   // Meta downloads media from a URL, so storage must be publicly reachable.
   mediaRules: { maxVideoBytes: 1024 * 1024 * 1024, maxVideoSeconds: 5 * 60, maxImageBytes: 8 * 1024 * 1024, requiresPublicUrl: true },
@@ -630,7 +634,7 @@ export const ThreadsComposeInputSchema = z.object({
       { value: "followers_only", label: "Followers only" },
     ],
   }),
-  topic_tag: composeField(topicTag.optional(), { label: "Topic", description: "Topic tag for the post (no periods or ampersands).", kind: "text", countMode: "chars", maxLength: THREADS_TOPIC_TAG.max }),
+  topic_tag: composeField(topicTag.optional(), { label: "Topic", description: "Topic tag for the post (no periods or ampersands).", kind: "text", countMode: "chars", maxLength: THREADS_TOPIC_TAG.max, ai: true }),
   is_spoiler_media: composeField(z.boolean().optional(), { label: "Mark media as spoiler", description: "Blur the media as a spoiler.", kind: "toggle" }),
 });
 export type ThreadsComposeInput = z.infer<typeof ThreadsComposeInputSchema>;

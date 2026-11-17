@@ -10,6 +10,8 @@ export const INSTAGRAM_HASHTAGS_MAX = 30;
 export const INSTAGRAM_MENTIONS_MAX = 20;
 export const INSTAGRAM_ALT_TEXT_MAX = 1000;
 export const INSTAGRAM_COLLABORATORS_MAX = 3;
+/** user_tags per media item (error subcode 2207040 above it). */
+export const INSTAGRAM_USER_TAGS_MAX = 20;
 
 /** One constant for the carousel ceiling (children 2–20). */
 export const INSTAGRAM_CAROUSEL_MAX = 20;

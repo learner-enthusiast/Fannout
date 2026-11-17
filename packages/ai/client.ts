@@ -23,7 +23,11 @@ export type GenerateStructuredInput<T extends z.ZodType> = {
   schema: T;
   schemaName: string;
   model?: string;
+  /** Vision input, already downscaled. Sent inline (base64, detail "low") — never as URLs. */
+  images?: AiImage[];
 };
+
+export type AiImage = { mimeType: string; base64: string };
 
 export type GenerateStructuredResult<T> = { data: T; usage: AiUsage; model: string };
 
@@ -68,13 +72,25 @@ export function createAiClient(options: { apiKey?: string; model?: string; opena
     async generateStructured(input) {
       const model = input.model ?? options.model ?? aiEnv().OPENAI_MODEL;
       const log = aiEnv().AI_LOG_PROMPTS;
-      if (log) logger.debug("AI request", { model, schemaName: input.schemaName, system: input.system, user: input.user });
+      if (log) logger.debug("AI request", { model, schemaName: input.schemaName, system: input.system, user: input.user, images: input.images?.length ?? 0 });
       try {
         const response = await getClient().responses.parse({
           model,
           input: [
             { role: "system", content: input.system },
-            { role: "user", content: input.user },
+            {
+              role: "user",
+              content: input.images?.length
+                ? [
+                    { type: "input_text" as const, text: input.user },
+                    ...input.images.map((image) => ({
+                      type: "input_image" as const,
+                      image_url: `data:${image.mimeType};base64,${image.base64}`,
+                      detail: "low" as const,
+                    })),
+                  ]
+                : input.user,
+            },
           ],
           text: { format: zodTextFormat(input.schema, input.schemaName) },
         });

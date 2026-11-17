@@ -14,14 +14,19 @@ import {
   sql,
 } from "@repo/database";
 import { errors } from "@repo/errors";
+import { logger } from "@repo/logger";
+import { XProvider } from "@repo/providers";
 import { z } from "zod";
 import { cached, invalidate } from "../cache";
 import { decodeKeyCursor, toKeyPage } from "../common/pagination";
+import { createProviderForConnection } from "../provider-factory";
 import {
   CreateMentionInputSchema,
   MentionContactPageSchema,
   MentionContactViewSchema,
   MentionPlatformSchema,
+  ResolveXUserInputSchema,
+  ResolvedXUserSchema,
   SearchMentionsInputSchema,
   UpdateMentionInputSchema,
   type CreateMentionInput,
@@ -185,3 +190,66 @@ export async function recordMentionsUsed(userId: string, platform: string, input
   await invalidate(userId, "mentions");
 }
 
+
+// ---------------------------------------------------------------------------
+// Media tags (separate from @mentions in the text)
+// ---------------------------------------------------------------------------
+
+/**
+ * X tags need a numeric user id. GET /2/users/by/username/{username} is a BILLED read, so it runs
+ * only when the contact has no saved id; the id is then kept on the contact (platform_ref) and the
+ * answer is cached in the `mentions` group. A username is never looked up twice.
+ */
+export async function resolveXUser(userId: string, input: unknown) {
+  const { socialConnectionId, username } = ResolveXUserInputSchema.parse(input);
+  return cached({
+    userId,
+    group: "mentions",
+    key: "resolveXUser",
+    input: { username: username.toLowerCase() },
+    schema: ResolvedXUserSchema,
+    load: async () => {
+      const [contact] = await db
+        .select()
+        .from(mentionContacts)
+        .where(and(eq(mentionContacts.userId, userId), eq(mentionContacts.platform, "x"), sql`lower(${mentionContacts.handle}) = ${username.toLowerCase()}`))
+        .limit(1);
+      if (contact?.handle && contact.platformRef && /^\d{1,19}$/.test(contact.platformRef)) {
+        return { username: contact.handle, xUserId: contact.platformRef, displayName: contact.displayName };
+      }
+
+      const provider = await createProviderForConnection({ userId, connectionId: socialConnectionId });
+      if (!(provider instanceof XProvider)) return errors.badRequest("Not an X account");
+      logger.info("X user lookup (billed)", { userId, socialConnectionId });
+      const result = await provider.getUserByUsername({ username });
+      const user = result.data;
+      if (!user?.id) return errors.notFound(`X user @${username}`);
+
+      const handle = user.username ?? username;
+      const displayName = user.name ?? handle;
+      if (contact) {
+        await db.update(mentionContacts).set({ platformRef: user.id, handle }).where(eq(mentionContacts.id, contact.id));
+      } else {
+        await db.insert(mentionContacts).values({ userId, platform: "x", displayName, handle, platformRef: user.id }).onConflictDoNothing();
+      }
+      await invalidate(userId, "mentions");
+      return { username: handle, xUserId: user.id, displayName };
+    },
+  });
+}
+
+/** After a platform accepts a post: remember tagged usernames (new ones become contacts) and count the use. */
+export async function saveTagContacts(userId: string, platform: string, usernames: string[]) {
+  const parsed = MentionPlatformSchema.safeParse(platform);
+  const handles = [...new Set(usernames.map((u) => u.replace(/^@/, "")).filter((u) => /^[A-Za-z0-9_.]+$/.test(u)))];
+  if (!parsed.success || handles.length === 0) return;
+  await db
+    .insert(mentionContacts)
+    .values(handles.map((handle) => ({ userId, platform: parsed.data, displayName: handle, handle })))
+    .onConflictDoNothing();
+  await db
+    .update(mentionContacts)
+    .set({ useCount: sql`${mentionContacts.useCount} + 1`, lastUsedAt: new Date() })
+    .where(and(eq(mentionContacts.userId, userId), eq(mentionContacts.platform, parsed.data), inArray(mentionContacts.handle, handles)));
+  await invalidate(userId, "mentions");
+}

@@ -11,24 +11,42 @@ import {
   MediaPageSchema,
   MediaViewSchema,
   RenameMediaInputSchema,
+  SignUploadPartsInputSchema,
+  SignUploadPartsResultSchema,
 } from "@repo/services/media/model";
 import { deleteMediaChecked, getMediaDetail, renameMedia } from "@repo/services/media/library";
 import {
   completeMediaUpload,
   createMediaUpload,
   failMediaUpload,
+  signMediaUploadParts,
 } from "@repo/services/media/uploads";
 import { listMediaPage, toMediaView } from "@repo/services/media/views";
+import { ZipMediaInputSchema, ZipMediaResultSchema, zipMedia } from "@repo/services/media/zip";
 import { z } from "zod";
 import { router, scoped } from "../../trpc";
 
 export const mediaRouter = router({
-  /** Starts a multipart upload: returns presigned URLs for every 10 MiB part. */
+  /** Images of a manual post, zipped in slide order (read from storage on the server). */
+  zip: scoped("media:read")
+    .meta({ openapi: { method: "POST", path: "/media/zip", summary: "Download several of your images as one zip, in the given order", protect: true } })
+    .input(ZipMediaInputSchema)
+    .output(ZipMediaResultSchema)
+    .mutation(({ ctx, input }) => zipMedia(ctx.dbUserId, input)),
+
+  /** Starts a multipart upload (media row status "uploading" from now on) or reuses an identical ready file. */
   createUpload: scoped("media:write")
     .meta({ openapi: { method: "POST", path: "/media/uploads", summary: "Start a multipart upload and get presigned part URLs", protect: true } })
     .input(CreateUploadInputSchema)
     .output(CreateUploadResultSchema)
     .mutation(({ ctx, input }) => createMediaUpload(ctx.dbUserId, input)),
+
+  /** Fresh presigned part URLs: expired URLs, the rest of a large file, or resuming after a reload. */
+  signUploadParts: scoped("media:write")
+    .meta({ openapi: { method: "POST", path: "/media/{mediaId}/parts", summary: "Presign (or re-sign) part URLs for an upload in progress", protect: true } })
+    .input(SignUploadPartsInputSchema)
+    .output(SignUploadPartsResultSchema)
+    .mutation(({ ctx, input }) => signMediaUploadParts(ctx.dbUserId, input)),
 
   /** Finishes the upload and hands processing to Inngest. Returns immediately. */
   completeUpload: scoped("media:write")

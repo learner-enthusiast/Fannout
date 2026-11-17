@@ -1,7 +1,10 @@
+import { InstagramUserTagSchema } from "@repo/providers/instagram";
+import { XTaggedUserSchema } from "@repo/providers/x";
+import { YouTubeRelatedVideoSchema, youtubeStudioEditUrl } from "@repo/providers/youtube";
 import { z } from "zod";
 import { PaginationInputSchema, paginatedOutput } from "../common/pagination";
 import { PostScheduleViewSchema, ScheduleInputSchema } from "../scheduling/model";
-import { PlatformSchema } from "./platforms";
+import { PlatformSchema, type Platform } from "./platforms";
 
 export const ComposeMediaTypeSchema = z.enum(["video", "photos"]);
 export type ComposeMediaType = z.infer<typeof ComposeMediaTypeSchema>;
@@ -76,8 +79,62 @@ export const PostConfigSchema = z.looseObject({
   attempts: z.number().int().nonnegative().default(0),
   /** Resume data written as each step finishes, so retries never re-upload. */
   progress: z.record(z.string(), z.unknown()).default({}),
+  /** Manual post (platform has no API for it): never sent to the publish job. */
+  manual: z.object({ status: z.enum(["pending", "posted"]), postedAt: z.string().optional() }).optional(),
+  /** Per-post platform data kept out of `input` (see splitComposeInput). */
+  instagram: z.object({ tags: z.array(InstagramUserTagSchema).default([]) }).optional(),
+  x: z.object({ taggedUsers: z.array(XTaggedUserSchema).default([]) }).optional(),
+  youtube: z
+    .object({
+      /** The follow-up task "Set related video in YouTube Studio". */
+      relatedVideo: YouTubeRelatedVideoSchema.extend({ status: z.enum(["pending", "done"]).default("pending") }).optional(),
+    })
+    .optional(),
 });
 export type PostConfig = z.infer<typeof PostConfigSchema>;
+
+/**
+ * The composer sends tags / related video inside `targets[].input` (validated by the platform's
+ * compose schema). They are stored under posts.config.<platform> rather than in config.input.
+ */
+export function splitComposeInput(platform: Platform, input: Record<string, unknown>) {
+  const { userTags, taggedUsers, relatedVideo, ...rest } = input;
+  if (platform === "instagram" && Array.isArray(userTags) && userTags.length) return { input: rest, extras: { instagram: { tags: userTags } } };
+  if (platform === "x" && Array.isArray(taggedUsers) && taggedUsers.length) return { input: rest, extras: { x: { taggedUsers } } };
+  if (platform === "youtube" && relatedVideo && typeof relatedVideo === "object") {
+    return { input: rest, extras: { youtube: { relatedVideo: { watchNext: true, ...relatedVideo, status: "pending" } } } };
+  }
+  return { input: platform === "instagram" || platform === "x" || platform === "youtube" ? rest : input, extras: {} };
+}
+
+/** The inverse: the compose input the publishers and a repost work from. */
+export function joinComposeInput(config: PostConfig): Record<string, unknown> {
+  const related = config.youtube?.relatedVideo;
+  return {
+    ...config.input,
+    ...(config.instagram?.tags.length ? { userTags: config.instagram.tags } : {}),
+    ...(config.x?.taggedUsers.length ? { taggedUsers: config.x.taggedUsers } : {}),
+    ...(related ? { relatedVideo: { videoId: related.videoId, title: related.title, watchNext: related.watchNext } } : {}),
+  };
+}
+
+/** What the post lists show for the manual steps tracked in posts.config. */
+export function postTasks(config: PostConfig | null, post: { status: string; externalPostId: string | null }) {
+  const related = config?.youtube?.relatedVideo;
+  const dropped = z.array(z.string()).catch([]).parse(config?.progress.tagsDropped ?? []);
+  return {
+    manual: config?.manual ? { status: config.manual.status } : null,
+    relatedVideo: related
+      ? {
+          videoId: related.videoId,
+          title: related.title,
+          status: related.status,
+          studioUrl: post.status === "published" && post.externalPostId ? youtubeStudioEditUrl(post.externalPostId) : null,
+        }
+      : null,
+    warning: dropped.length ? `Posted without tags: ${dropped.map((u) => `@${u}`).join(", ")} couldn't be tagged` : null,
+  };
+}
 
 export const PostAccountSchema = z.object({
   username: z.string().nullable().describe("Account handle."),
@@ -105,6 +162,16 @@ export const BatchPostViewSchema = z.object({
   deleteErrorMessage: z.string().nullable().describe("Why the last delete failed."),
   deletedAt: z.date().nullable().describe("When the post was deleted."),
   schedule: PostScheduleViewSchema.nullable().describe("Schedule for scheduled posts; null when the post was published immediately."),
+  manual: z.object({
+    status: z.enum(["pending", "posted"]).describe("pending = publish it yourself, then call POST /posts/{postId}/manual-posted."),
+  }).nullable().describe("Set for manual posts (the platform has no API for this post type, e.g. YouTube image posts). They stay in status draft and are never sent to the platform."),
+  relatedVideo: z.object({
+    videoId: z.string().describe("The video to set as related."),
+    title: z.string().describe("Its title."),
+    status: z.enum(["pending", "done"]).describe("pending until POST /posts/{postId}/tasks/related-video/done."),
+    studioUrl: z.string().nullable().describe("YouTube Studio edit page of the published video; null until it is published."),
+  }).nullable().describe("YouTube follow-up task: set this related video in YouTube Studio (the Data API can't)."),
+  warning: z.string().nullable().describe("Non-fatal note about a published post, e.g. X tags that had to be dropped."),
 });
 
 export const BatchViewSchema = z.object({
@@ -126,10 +193,32 @@ export type BatchView = z.infer<typeof BatchViewSchema>;
 
 export const ListBatchesInputSchema = PaginationInputSchema.extend({
   filter: z
-    .enum(["all", "scheduled"])
+    .enum(["all", "scheduled", "manual"])
     .default("all")
-    .describe("scheduled = only batches with a post still waiting for its scheduled time"),
+    .describe("scheduled = only batches with a post still waiting for its scheduled time; manual = only batches with a manual post you still have to publish yourself"),
 });
 export const BatchPageSchema = paginatedOutput(BatchViewSchema);
 
 export const TERMINAL_STATUSES = ["published", "failed", "cancelled", "deleted"] as const;
+
+export const ManualPostedInputSchema = z.object({
+  postId: z.uuid().describe("A manual post (manual.status = pending)."),
+  postUrl: z
+    .url()
+    .max(500)
+    .refine((value) => /^https:\/\/([a-z0-9-]+\.)*(youtube\.com|youtu\.be)\//i.test(value), "Paste a YouTube link (https://www.youtube.com/…)")
+    .optional()
+    .describe("Link to the post you published by hand; stored as the post URL."),
+});
+export const PostTaskResultSchema = z.object({ updated: z.boolean().describe("False when there was nothing to change (already done).") });
+
+export const YouTubeUploadSchema = z.object({
+  videoId: z.string().describe("YouTube video ID."),
+  title: z.string().describe("Video title."),
+  thumbnailUrl: z.string().nullable().describe("Thumbnail image URL."),
+  publishedAt: z.string().nullable().describe("When the video was published (ISO 8601)."),
+});
+export const YouTubeUploadsPageSchema = paginatedOutput(YouTubeUploadSchema);
+export const YouTubeUploadsInputSchema = PaginationInputSchema.extend({
+  socialConnectionId: z.uuid().describe("A connected YouTube account."),
+});

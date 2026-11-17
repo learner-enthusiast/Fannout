@@ -12,7 +12,11 @@ import {
   BatchPageSchema,
   BatchViewSchema,
   ListBatchesInputSchema,
+  ManualPostedInputSchema,
   PostConfigSchema,
+  joinComposeInput,
+  postTasks,
+  splitComposeInput,
   PublishBatchInputSchema,
   TERMINAL_STATUSES,
   type BatchView,
@@ -94,7 +98,8 @@ async function existingBatch(userId: string, idempotencyKey: string, connectionI
 }
 
 function captionOf(target: ValidatedTarget): string | null {
-  const value = target.input[PLATFORMS[target.platform].captionField];
+  const definition = PLATFORMS[target.platform];
+  const value = target.input[target.manual ? (definition.manualFields?.[0] ?? definition.captionField) : definition.captionField];
   return typeof value === "string" && value.trim() ? value : null;
 }
 
@@ -144,6 +149,7 @@ export async function publishBatch(
       const out: PublishBatchResult["posts"] = [];
       for (const target of targets) {
         const schedule = target.schedule;
+        const { input: composeInput, extras } = splitComposeInput(target.platform, target.input);
         const [post] = await tx
           .insert(posts)
           .values({
@@ -154,13 +160,16 @@ export async function publishBatch(
             config: {
               platform: target.platform,
               mediaType: data.mediaType,
-              input: target.input,
+              input: composeInput,
               attempts: 0,
-              progress: schedule ? { step: "Scheduled" } : {},
+              progress: schedule ? { step: "Scheduled" } : target.manual ? { step: "Waiting for you to post it" } : {},
               ...(data.jsonMediaId ? { sourceJsonId: data.jsonMediaId } : {}),
+              ...extras,
+              // Manual posts stay drafts: publish-batch only fans out `queued` posts.
+              ...(target.manual ? { manual: { status: "pending" } } : {}),
               ...options.extraConfig,
             },
-            status: schedule ? "scheduled" : "queued",
+            status: target.manual ? "draft" : schedule ? "scheduled" : "queued",
             batchId,
             idempotencyKey: targetKey(data.idempotencyKey, target.socialConnectionId),
           })
@@ -251,6 +260,7 @@ async function batchViews(userId: string, batchIds: string[]): Promise<BatchView
         deleteErrorCode: post.deleteErrorCode,
         deleteErrorMessage: post.deleteErrorMessage,
         deletedAt: post.deletedAt,
+        ...postTasks(config.success ? config.data : null, post),
         schedule: (() => {
           const row = schedules.get(post.id);
           return row
@@ -276,7 +286,8 @@ async function batchViews(userId: string, batchIds: string[]): Promise<BatchView
       mediaType: firstConfig?.success ? firstConfig.data.mediaType : "video",
       createdAt: first?.createdAt ?? new Date(0),
       caption: items.find((row) => row.post.caption)?.post.caption ?? null,
-      finished: views.length > 0 && views.every((v) => (TERMINAL_STATUSES as readonly string[]).includes(v.status)),
+      // A manual post waits for the user, not for Fannout: it never keeps a batch "in progress".
+      finished: views.length > 0 && views.every((v) => (TERMINAL_STATUSES as readonly string[]).includes(v.status) || v.manual?.status === "pending"),
       counts: { total: views.length, published, failed, pending: views.length - published - failed },
       posts: views,
     };
@@ -343,7 +354,9 @@ async function loadBatches(owner: string, { cursor, limit, filter }: z.output<ty
         sql`${posts.batchId} IS NOT NULL`,
         filter === "scheduled"
           ? sql`${posts.batchId} IN (SELECT p2.batch_id FROM ${posts} p2 JOIN ${scheduledPosts} s ON s.post_id = p2.id WHERE p2.user_id = ${owner} AND s.status IN ('scheduled', 'handed_off', 'missed'))`
-          : undefined,
+          : filter === "manual"
+            ? sql`${posts.batchId} IN (SELECT p2.batch_id FROM ${posts} p2 WHERE p2.user_id = ${owner} AND p2.status = 'draft' AND p2.config->'manual'->>'status' = 'pending')`
+            : undefined,
       ),
     )
     .groupBy(posts.batchId)
@@ -383,3 +396,55 @@ export async function retryPost(userId: string, postId: string) {
   await invalidate(row.userId, "posts");
   return { postId: row.id, batchId: row.batchId, socialConnectionId: row.socialConnectionId, attempt: attempts };
 }
+
+// ---------------------------------------------------------------------------
+// Manual steps (tracked in posts.config; they never block publishing)
+// ---------------------------------------------------------------------------
+
+async function ownedPost(userId: string, postId: string) {
+  const [row] = await db
+    .select()
+    .from(posts)
+    .where(and(eq(posts.id, UuidSchema.parse(postId)), eq(posts.userId, UuidSchema.parse(userId))))
+    .limit(1);
+  if (!row) return errors.notFound("Post");
+  return { row, config: PostConfigSchema.parse(row.config) };
+}
+
+/** "Mark as posted": the user published a manual post by hand. Idempotent. */
+export async function markManualPosted(userId: string, input: z.input<typeof ManualPostedInputSchema>) {
+  const data = ManualPostedInputSchema.parse(input);
+  const { row, config } = await ownedPost(userId, data.postId);
+  if (!config.manual) return errors.badRequest("This isn't a manual post");
+  if (config.manual.status === "posted") return { updated: false };
+  const now = new Date();
+  const updated = await db
+    .update(posts)
+    .set({
+      status: "published",
+      postUrl: data.postUrl ?? null,
+      publishedAt: now,
+      config: { ...config, manual: { status: "posted", postedAt: now.toISOString() }, progress: { ...config.progress, step: "Posted by you" } },
+      updatedAt: now,
+    })
+    .where(and(eq(posts.id, row.id), eq(posts.status, "draft")))
+    .returning({ id: posts.id });
+  await invalidate(row.userId, "posts");
+  return { updated: updated.length > 0 };
+}
+
+/** "Mark done" on the "Set related video in YouTube Studio" task. Idempotent. */
+export async function completeRelatedVideoTask(userId: string, postId: string) {
+  const { row, config } = await ownedPost(userId, postId);
+  const related = config.youtube?.relatedVideo;
+  if (!related) return errors.badRequest("This post has no related video task");
+  if (related.status === "done") return { updated: false };
+  await db
+    .update(posts)
+    .set({ config: { ...config, youtube: { ...config.youtube, relatedVideo: { ...related, status: "done" } } }, updatedAt: new Date() })
+    .where(eq(posts.id, row.id));
+  await invalidate(row.userId, "posts");
+  return { updated: true };
+}
+
+export { joinComposeInput };

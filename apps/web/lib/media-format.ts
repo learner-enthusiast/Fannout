@@ -21,7 +21,8 @@ export function formatDuration(seconds: number | null | undefined): string {
     return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${s}` : `${m}:${s}`
 }
 
-export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024 * 1024
+/** Storage cap (10,000 × 10 MiB parts). The API enforces the real limit: the largest any platform accepts. */
+export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024 * 10_000
 export const MAX_TEXT_UPLOAD_BYTES = 1024 * 1024
 
 export type UploadKind = 'image' | 'video' | 'subtitle' | 'json'

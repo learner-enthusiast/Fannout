@@ -1,5 +1,5 @@
 import { and, asc, db, eq, inArray, isNull, media, postMedia, posts, socialConnections, sql } from "@repo/database";
-import { AppError } from "@repo/errors";
+import { AppError, errors } from "@repo/errors";
 import {
   FacebookProvider,
   InstagramProvider,
@@ -16,10 +16,12 @@ import { createProviderForConnection } from "../provider-factory";
 import { SocialConnectionRowSchema } from "../social-connections/model";
 import { updateSocialConnection } from "../social-connections";
 import { PermanentPublishError } from "./errors";
-import { PostConfigSchema, TERMINAL_STATUSES } from "./model";
+import { youtubeStudioEditUrl, youtubeVideoIdFromUrl } from "@repo/providers/youtube";
+import { joinComposeInput, PostConfigSchema, TERMINAL_STATUSES, YouTubeUploadSchema, YouTubeUploadsPageSchema } from "./model";
 import { PLATFORMS } from "./platforms";
-import { failSchedule } from "../scheduling";
-import { recordMentionsUsed } from "../mentions";
+import { failSchedule, markScheduleMissed } from "../scheduling";
+import { mediaIssues } from "./validate";
+import { recordMentionsUsed, saveTagContacts } from "../mentions";
 import { FacebookPublishError, MISSING_VIDEO_PERMISSION_MESSAGE, facebookPublisher } from "./publishers/facebook";
 import { LINKEDIN_MISSING_SHARE_MESSAGE, LinkedInPublishError, linkedinPublisher } from "./publishers/linkedin";
 import { INSTAGRAM_NEW_CONTAINER_SUBCODES, instagramPublisher, instagramSubcode } from "./publishers/instagram";
@@ -230,11 +232,64 @@ async function loadMedia(postId: string): Promise<{ media: MediaRow[]; thumbnail
     .innerJoin(media, eq(media.id, postMedia.mediaId))
     .where(eq(postMedia.postId, postId))
     .orderBy(asc(postMedia.position));
-  const thumb = rows.find((r) => r.link.role === "thumbnail");
+  // An optional thumbnail that isn't ready by now is skipped (await-media notifies the user).
+  const thumb = rows.find((r) => r.link.role === "thumbnail" && r.row.status === "ready");
   return {
     media: rows.filter((r) => r.link.role !== "thumbnail").map((r) => MediaRowSchema.parse(r.row)),
     thumbnail: thumb ? MediaRowSchema.parse(thumb.row) : null,
   };
+}
+
+// ---------------------------------------------------------------------------
+// await-media: posts can be created while their files still upload.
+// ---------------------------------------------------------------------------
+
+export type PostMediaState = {
+  /** Every non-thumbnail file is ready. */
+  ready: boolean;
+  /** A required file failed (name), or null. */
+  failed: string | null;
+  /** Required files not ready yet. */
+  pending: { id: string; name: string; status: string }[];
+  /** The optional thumbnail, when the post has one and it isn't ready. */
+  thumbnailMissing: { id: string; name: string; status: string } | null;
+};
+
+/** Read straight from Postgres (never the cache): the source of truth for await-media. */
+export async function postMediaState(postId: string): Promise<PostMediaState> {
+  const rows = await db
+    .select({ role: postMedia.role, id: media.id, name: media.name, status: media.status })
+    .from(postMedia)
+    .innerJoin(media, eq(media.id, postMedia.mediaId))
+    .where(eq(postMedia.postId, postId))
+    .orderBy(asc(postMedia.position));
+  const required = rows.filter((r) => r.role !== "thumbnail");
+  const thumb = rows.find((r) => r.role === "thumbnail");
+  const failed = required.find((r) => r.status === "failed");
+  const pending = required.filter((r) => r.status !== "ready" && r.status !== "failed").map(({ id, name, status }) => ({ id, name, status }));
+  return {
+    ready: !failed && pending.length === 0,
+    failed: failed?.name ?? null,
+    pending,
+    thumbnailMissing: thumb && thumb.status !== "ready" ? { id: thumb.id, name: thumb.name, status: thumb.status } : null,
+  };
+}
+
+/** Platform media rules again, now that processing knows durations and real types. */
+export async function postMediaIssues(postId: string): Promise<string[]> {
+  const post = await loadPost(postId);
+  if (!post) return [];
+  const config = PostConfigSchema.parse(post.config);
+  const { media: items } = await loadMedia(post.id);
+  return mediaIssues(config.platform, config.mediaType, items, null, false)
+    .filter((issue) => issue.field === "media")
+    .map((issue) => issue.message);
+}
+
+/** A scheduled post whose files weren't ready in the late window: missed (the user can "Publish now"). */
+export async function markPostMediaMissed(postId: string, message: string) {
+  await markScheduleMissed(postId, message);
+  await markPostFailed(postId, "media_not_ready", message);
 }
 
 export type PublishPhase = "prepare" | "finalize";
@@ -275,7 +330,10 @@ export async function runPublishPhase(postId: string, phase: PublishPhase, optio
   try {
     if (!connectionRow) throw new PermanentPublishError("NOT_FOUND", "The account was removed");
     const connection = SocialConnectionRowSchema.parse(connectionRow);
-    const input = PLATFORMS[config.platform].schema.parse(config.input) as Record<string, unknown>;
+    // A manual post (posts.config.manual) is published by the user, never by this job.
+    if (config.manual) throw new PermanentPublishError("MANUAL_POST", "This post is published by hand, not by Fannout");
+    // Tags / related video live under config.<platform>; publishers get them back as compose input.
+    const input = PLATFORMS[config.platform].schema.parse(joinComposeInput(config)) as Record<string, unknown>;
     const { media: items, thumbnail } = await loadMedia(post.id);
     const ctx: PublishContext = {
       postId: post.id,
@@ -319,6 +377,13 @@ export async function runPublishPhase(postId: string, phase: PublishPhase, optio
     await saveConfigProgress(post.id, {}, "Published");
     // Mention counters are ancillary; never turn an already-live post into a failure.
     await recordMentionsUsed(post.userId, config.platform, input).catch(() => undefined);
+    // Same for the people tagged on the media: remember new usernames for the tag popover.
+    const dropped = (ctx.progress.tagsDropped as string[] | undefined) ?? [];
+    const tagged = [
+      ...(config.instagram?.tags ?? []).map((tag) => tag.username),
+      ...(config.x?.taggedUsers ?? []).map((tag) => tag.username).filter((username) => !dropped.includes(username)),
+    ];
+    await saveTagContacts(post.userId, config.platform, tagged).catch(() => undefined);
     return outcome;
   } catch (error) {
     if (error instanceof PermanentPublishError) {
@@ -349,12 +414,25 @@ export async function postSummary(postId: string) {
     postUrl: row.postUrl,
     errorMessage: row.errorMessage,
     platform: config.success ? config.data.platform : null,
+    /** Follow-up task for a published YouTube video (the API can't set a related video). */
+    relatedVideo:
+      row.status === "published" && row.externalPostId && config.success && config.data.youtube?.relatedVideo?.status === "pending"
+        ? {
+            title: config.data.youtube.relatedVideo.title,
+            studioUrl: youtubeStudioEditUrl(row.externalPostId),
+            isShort: Boolean(config.data.progress.isShort),
+          }
+        : null,
+    /** X tags that had to be dropped to get the post out. */
+    tagsDropped: config.success ? z.array(z.string()).catch([]).parse(config.data.progress.tagsDropped ?? []) : [],
   };
 }
 
 /** Counts for a batch; `finished` once every post is published/failed/cancelled. */
 export async function batchProgress(batchId: string) {
-  const rows = await db.select({ status: posts.status, userId: posts.userId }).from(posts).where(eq(posts.batchId, batchId));
+  // Manual posts (drafts the user publishes by hand) never hold a batch open.
+  const all = await db.select({ status: posts.status, userId: posts.userId }).from(posts).where(eq(posts.batchId, batchId));
+  const rows = all.filter((r) => r.status !== "draft");
   const published = rows.filter((r) => r.status === "published").length;
   return {
     userId: rows[0]?.userId ?? null,
@@ -413,6 +491,87 @@ export async function listYouTubeCategories(userId: string, connectionId: string
       return (result.items ?? [])
         .filter((item) => item.id && item.snippet?.assignable)
         .map((item) => ({ id: item.id!, title: item.snippet?.title ?? item.id! }));
+    },
+  });
+}
+
+/** The channel's "uploads" playlist id (channels.list part=contentDetails, mine=true). It never changes, so it is cached. */
+async function youtubeUploadsPlaylist(userId: string, connectionId: string) {
+  return cached({
+    userId,
+    group: `platform:${connectionId}`,
+    key: "youtubeUploadsPlaylist",
+    schema: z.string().min(1),
+    load: async () => {
+      const youtube = await youtubeFor(userId, connectionId);
+      const result = await youtube.listChannels({ part: ["contentDetails"], mine: true });
+      const playlistId = result.items?.[0]?.contentDetails?.relatedPlaylists?.uploads;
+      if (!playlistId) throw new PermanentPublishError("NOT_FOUND", "This YouTube channel has no uploads yet");
+      return playlistId;
+    },
+  });
+}
+
+type Thumbnails = { medium?: { url?: string | null } | null; default?: { url?: string | null } | null } | null | undefined;
+const thumbnailOf = (thumbnails: Thumbnails) => thumbnails?.medium?.url ?? thumbnails?.default?.url ?? null;
+
+/** The channel's own videos, newest first (playlistItems.list on the uploads playlist); cursor = YouTube's pageToken. */
+export async function listYouTubeUploads(userId: string, connectionId: string, input: { cursor?: string | null; limit: number }) {
+  return cached({
+    userId,
+    group: `platform:${connectionId}`,
+    key: "listYouTubeUploads",
+    input: { cursor: input.cursor ?? null, limit: input.limit },
+    schema: YouTubeUploadsPageSchema,
+    load: async () => {
+      const playlistId = await youtubeUploadsPlaylist(userId, connectionId);
+      const youtube = await youtubeFor(userId, connectionId);
+      const result = await youtube.listPlaylistItem({
+        part: ["snippet", "contentDetails"],
+        playlistId,
+        maxResults: input.limit,
+        ...(input.cursor ? { pageToken: input.cursor } : {}),
+      });
+      return {
+        items: (result.items ?? []).flatMap((item) => {
+          const videoId = item.contentDetails?.videoId ?? item.snippet?.resourceId?.videoId;
+          if (!videoId) return [];
+          return [
+            {
+              videoId,
+              title: item.snippet?.title ?? "Untitled video",
+              thumbnailUrl: thumbnailOf(item.snippet?.thumbnails),
+              publishedAt: item.contentDetails?.videoPublishedAt ?? item.snippet?.publishedAt ?? null,
+            },
+          ];
+        }),
+        nextCursor: result.nextPageToken ?? null,
+      };
+    },
+  });
+}
+
+/** "Paste a YouTube URL": validates it, extracts the video id and reads the title (videos.list). */
+export async function getYouTubeVideoByUrl(userId: string, connectionId: string, url: string) {
+  const videoId = youtubeVideoIdFromUrl(url);
+  if (!videoId) return errors.badRequest("That isn't a YouTube video link");
+  return cached({
+    userId,
+    group: `platform:${connectionId}`,
+    key: "getYouTubeVideo",
+    input: { videoId },
+    schema: YouTubeUploadSchema,
+    load: async () => {
+      const youtube = await youtubeFor(userId, connectionId);
+      const result = await youtube.listVideo({ part: ["snippet"], id: [videoId] });
+      const video = result.items?.[0];
+      if (!video) return errors.notFound("YouTube video");
+      return {
+        videoId,
+        title: video.snippet?.title ?? "Untitled video",
+        thumbnailUrl: thumbnailOf(video.snippet?.thumbnails),
+        publishedAt: video.snippet?.publishedAt ?? null,
+      };
     },
   });
 }

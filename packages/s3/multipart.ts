@@ -64,6 +64,26 @@ export async function getUploadPartUrls(
   );
 }
 
+/** Presigned PUT URLs for specific parts only (re-sign after expiry, resume after a reload). */
+export async function signUploadParts(
+  key: string,
+  uploadId: string,
+  partNumbers: number[],
+  options: BucketOption & { expiresIn?: number } = {},
+): Promise<{ partNumber: number; url: string }[]> {
+  const bucket = options.bucket ?? defaultBucket();
+  const safeKey = assertSafeKey(key);
+  const client = getPublicS3Client();
+  return Promise.all(
+    partNumbers.map(async (partNumber) => ({
+      partNumber,
+      url: await getSignedUrl(client, new UploadPartCommand({ Bucket: bucket, Key: safeKey, UploadId: uploadId, PartNumber: partNumber }), {
+        expiresIn: options.expiresIn ?? 12 * 60 * 60,
+      }),
+    })),
+  );
+}
+
 export async function completeMultipartUpload(
   key: string,
   uploadId: string,

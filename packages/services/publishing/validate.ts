@@ -1,7 +1,8 @@
+import { z } from "zod";
 import type { MediaRow } from "../media/model";
 import { effectiveSchedule, scheduleTimeIssue } from "../scheduling/effective";
 import type { ComposeMediaType, PublishBatchInput, ValidationIssue } from "./model";
-import { PLATFORMS, platformForProvider, type Platform } from "./platforms";
+import { isManualPost, PLATFORMS, platformForProvider, type Platform } from "./platforms";
 
 /**
  * Pure batch validation (unit-tested). The DB layer loads the user's
@@ -25,14 +26,49 @@ export type ValidatedTarget = {
   thumbnailId: string | null;
   /** null = publish now. */
   schedule: { at: Date; timezone: string } | null;
+  /** The platform has no API for this post: stored for the user to publish by hand. */
+  manual: boolean;
 };
+
+const UserTagsSchema = z.array(z.object({ mediaIndex: z.number(), username: z.string(), x: z.number().optional(), y: z.number().optional() })).catch([]);
+
+/** Media tags vs the media they sit on (the field shapes themselves are checked by the compose schema). */
+function tagIssues(platform: Platform, mediaType: ComposeMediaType, mediaCount: number, input: Record<string, unknown>): { field: string; message: string }[] {
+  const { capabilities: cap, label } = PLATFORMS[platform];
+  const mode = mediaType === "video" ? cap.tagging.video : cap.tagging.image;
+  const tags = UserTagsSchema.parse(input.userTags ?? []);
+  if (tags.length === 0) return [];
+  if (mode === "none") return [{ field: "tags", message: `${label} can't tag people on ${mediaType === "video" ? "videos" : "photos"}` }];
+  const issues = new Set<string>();
+  const perMedia = new Map<number, string[]>();
+  for (const tag of tags) {
+    if (tag.mediaIndex >= mediaCount) issues.add("A tag points at a photo that isn't in this post");
+    const positioned = tag.x !== undefined && tag.y !== undefined;
+    if (mode === "positioned" && !positioned) issues.add(`@${tag.username} needs a position on the photo`);
+    if (mode === "list" && (tag.x !== undefined || tag.y !== undefined)) issues.add(`Tags on ${mediaType === "video" ? "videos" : "this platform"} can't have a position`);
+    const names = perMedia.get(tag.mediaIndex) ?? [];
+    if (names.includes(tag.username.toLowerCase())) issues.add(`@${tag.username} is tagged twice on the same ${mediaType === "video" ? "video" : "photo"}`);
+    perMedia.set(tag.mediaIndex, [...names, tag.username.toLowerCase()]);
+  }
+  for (const [index, names] of perMedia) {
+    if (names.length > cap.tagging.max) issues.add(`${label} allows at most ${cap.tagging.max} tags per ${mediaType === "video" ? "video" : "photo"} (${mediaType === "video" ? "this one" : `photo ${index + 1}`} has ${names.length})`);
+  }
+  return [...issues].map((message) => ({ field: "tags", message }));
+}
 
 const MB = 1024 * 1024;
 const size = (bytes: number) => (bytes >= 1024 * MB ? `${Math.round(bytes / (1024 * MB))} GB` : `${Math.round(bytes / MB)} MB`);
 
-const mimeLabel = (mime: string) => (mime === "image/jpeg" ? "JPEG" : mime === "video/mp4" ? "MP4" : mime === "video/quicktime" ? "MOV" : mime);
+const mimeLabel = (mime: string) => (mime === "image/jpeg" ? "JPEG" : mime === "image/png" ? "PNG" : mime === "video/mp4" ? "MP4" : mime === "video/quicktime" ? "MOV" : mime);
 
-function mediaIssues(
+/**
+ * Media rules for one platform. Media may still be uploading/processing:
+ * posts can be created before their files are ready (publish-post waits for
+ * them), so only "failed" media is rejected here; rules that need processed
+ * metadata (duration) apply once it is known — publish-post re-runs this
+ * check after every file is ready.
+ */
+export function mediaIssues(
   platform: Platform,
   mediaType: ComposeMediaType,
   media: MediaRow[],
@@ -42,8 +78,8 @@ function mediaIssues(
   const { capabilities: cap, label } = PLATFORMS[platform];
   const rules = cap.mediaRules;
   const issues: { field: string; message: string }[] = [];
-  const notReady = media.filter((m) => m.status !== "ready");
-  if (notReady.length) issues.push({ field: "media", message: `${notReady.map((m) => m.name).join(", ")} isn't ready yet` });
+  const failed = media.filter((m) => m.status === "failed");
+  if (failed.length) issues.push({ field: "media", message: `${failed.map((m) => m.name).join(", ")} failed to upload. Remove it or pick it again` });
 
   if (mediaType === "video") {
     if (!cap.supportsVideo) return [{ field: "media", message: `${label} doesn't support video posts` }];
@@ -68,20 +104,31 @@ function mediaIssues(
     if (thumbnailRequested) {
       if (!cap.supportsThumbnail) issues.push({ field: "thumbnail", message: `${label} doesn't take a custom thumbnail` });
       else if (!thumbnail || thumbnail.type !== "image") issues.push({ field: "thumbnail", message: "The thumbnail must be one of your images" });
-      else if (thumbnail.status !== "ready") issues.push({ field: "thumbnail", message: "The thumbnail isn't ready yet" });
+      else if (thumbnail.status === "failed") issues.push({ field: "thumbnail", message: "The thumbnail failed to upload. Pick it again" });
       else {
-        if (rules.imageMimeTypes && !rules.imageMimeTypes.includes(thumbnail.mimeType)) {
-          issues.push({ field: "thumbnail", message: `${label} accepts ${rules.imageMimeTypes.map(mimeLabel).join(" or ")} cover images only` });
+        // The platform's thumbnail rules win; without them the photo rules apply.
+        const mimeTypes = cap.thumbnailRules?.mimeTypes ?? rules.imageMimeTypes;
+        const maxBytes = cap.thumbnailRules?.maxBytes ?? rules.maxImageBytes;
+        if (mimeTypes && !mimeTypes.includes(thumbnail.mimeType)) {
+          issues.push({ field: "thumbnail", message: `${label} thumbnails must be ${mimeTypes.map(mimeLabel).join(" or ")} (${thumbnail.name} isn't)` });
         }
-        if (rules.maxImageBytes && (thumbnail.sizeBytes ?? 0) > rules.maxImageBytes) {
-          issues.push({ field: "thumbnail", message: `${label} cover images can be at most ${size(rules.maxImageBytes)}` });
+        if (maxBytes && (thumbnail.sizeBytes ?? 0) > maxBytes) {
+          issues.push({ field: "thumbnail", message: `${label} thumbnails can be at most ${size(maxBytes)} (${thumbnail.name} is larger)` });
         }
       }
     }
     return issues;
   }
 
-  if (!cap.supportsPhotos) return [{ field: "media", message: `${label} doesn't support photo posts` }];
+  const manual = isManualPost(platform, mediaType, media.length);
+  if (!cap.supportsPhotos && !manual) {
+    return [{ field: "media", message: cap.carouselMode === "manual" ? `${label} image posts need at least 2 photos` : `${label} doesn't support photo posts` }];
+  }
+  if (manual) {
+    if (media.some((m) => m.type !== "image")) issues.push({ field: "media", message: "Photo posts can only contain images" });
+    if (media.length > cap.carouselMax) issues.push({ field: "media", message: `${label} allows at most ${cap.carouselMax} photos (you picked ${media.length})` });
+    return issues;
+  }
   if (thumbnailRequested) issues.push({ field: "thumbnail", message: "Thumbnails are only for video posts" });
   if (media.some((m) => m.type !== "image")) issues.push({ field: "media", message: "Photo posts can only contain images" });
   if (media.length > cap.maxPhotos) {
@@ -139,14 +186,30 @@ export function validateBatch(params: {
       issues.push({ socialConnectionId: id, field: "account", message: "Reconnect this account before posting" });
     }
 
-    const parsed = PLATFORMS[platform].schema.safeParse(target.input);
+    const ids = input.mediaType === "photos" && target.mediaIds ? target.mediaIds : input.mediaIds;
+    const definition = PLATFORMS[platform];
+    const manual = isManualPost(platform, input.mediaType, ids.length);
+    // A manual post only has its own fields (e.g. the text); the video fields don't apply.
+    const schema = manual && definition.manualFields
+      ? definition.schema.pick(Object.fromEntries(definition.manualFields.map((name) => [name, true])) as Record<string, true>)
+      : definition.schema;
+    const parsed = schema.safeParse(target.input);
     if (!parsed.success) {
       for (const issue of parsed.error.issues) {
-        issues.push({ socialConnectionId: id, field: String(issue.path[0] ?? "input"), message: issue.message });
+        // Tags are edited outside the generic fields: show their errors in one place.
+        const field = String(issue.path[0] ?? "input");
+        issues.push({ socialConnectionId: id, field: field === "userTags" || field === "taggedUsers" ? "tags" : field, message: issue.message });
+      }
+    } else {
+      const data = parsed.data as Record<string, unknown>;
+      for (const issue of tagIssues(platform, input.mediaType, ids.length, data)) issues.push({ socialConnectionId: id, ...issue });
+      const cap = definition.capabilities;
+      const tagged = Array.isArray(data.taggedUsers) ? data.taggedUsers.length : 0;
+      if (tagged && (input.mediaType === "video" ? cap.tagging.video : cap.tagging.image) === "none") {
+        issues.push({ socialConnectionId: id, field: "tags", message: `${definition.label} can't tag people on this post` });
       }
     }
 
-    const ids = input.mediaType === "photos" && target.mediaIds ? target.mediaIds : input.mediaIds;
     if (target.mediaIds && target.mediaIds.some((mid) => !input.mediaIds.includes(mid))) {
       issues.push({ socialConnectionId: id, field: "media", message: "Per-account photos must come from the batch" });
     }
@@ -162,12 +225,13 @@ export function validateBatch(params: {
       issues.push({ socialConnectionId: id, ...issue });
     }
 
-    const schedule = effectiveSchedule(target, input.scheduleAll);
+    // A manual post is never published by Fannout, so it has no schedule.
+    const schedule = manual ? null : effectiveSchedule(target, input.scheduleAll);
     const timeIssue = schedule ? scheduleTimeIssue(schedule.at, now) : null;
     if (timeIssue) issues.push({ socialConnectionId: id, field: "schedule", message: timeIssue });
 
     if (parsed.success) {
-      targets.push({ socialConnectionId: id, platform, input: parsed.data as Record<string, unknown>, mediaIds: ids, thumbnailId, schedule });
+      targets.push({ socialConnectionId: id, platform, input: parsed.data as Record<string, unknown>, mediaIds: ids, thumbnailId, schedule, manual });
     }
   }
   return { issues, targets: issues.length ? [] : targets };

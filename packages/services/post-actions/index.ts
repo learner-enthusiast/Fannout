@@ -4,6 +4,7 @@ import { z } from "zod";
 import { cached, invalidate } from "../cache";
 import { omit } from "../lib/omit";
 import { publishBatch } from "../publishing";
+import { joinComposeInput } from "../publishing/model";
 import { PostConfigSchema } from "../publishing/model";
 import { PLATFORMS, platformForProvider, type Platform } from "../publishing/platforms";
 import { PostDetailSchema, RevisionSchema, type DeleteResult } from "./model";
@@ -164,7 +165,7 @@ export async function requestRepost(userId: string, input: { postId: string; cha
       mediaType: config.mediaType,
       mediaIds: media,
       ...(thumbnail ? { thumbnailByConnection: { [post.socialConnectionId]: thumbnail } } : {}),
-      targets: [{ socialConnectionId: post.socialConnectionId, input: { ...config.input, ...changes } }],
+      targets: [{ socialConnectionId: post.socialConnectionId, input: { ...joinComposeInput(config), ...changes } }],
     },
     { batchId: post.batchId ?? undefined, extraConfig: { repostOf: post.id, ...(input.deleteOriginal ? { deleteOriginalAfterPublish: post.id } : {}) } },
   );

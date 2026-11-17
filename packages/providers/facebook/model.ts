@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { composeField, type ComposeCapabilities } from "../common/compose";
+import { composeField, NO_TAGGING, type ComposeCapabilities } from "../common/compose";
 import { MediaSourceSchema } from "../common/media";
 import { graphCursorFields, graphListSchema, NO_BEFORE_AND_AFTER, noBeforeAndAfter } from "../common/meta-graph";
 import { FACEBOOK_ATTACHED_MEDIA_MAX, FACEBOOK_CHILD_ATTACHMENTS, FACEBOOK_FEED_LIMIT_MAX } from "./constants";
@@ -500,6 +500,10 @@ export const FACEBOOK_COMPOSE: ComposeCapabilities = {
   supportsPhotos: true,
   maxPhotos: FACEBOOK_ATTACHED_MEDIA_MAX,
   minCarousel: 1,
+  carouselMode: "api",
+  carouselMax: FACEBOOK_ATTACHED_MEDIA_MAX,
+  tagging: NO_TAGGING,
+  collaborators: null,
   supportsThumbnail: false,
   mediaRules: { maxVideoBytes: 10 * 1024 * 1024 * 1024, maxVideoSeconds: 240 * 60, maxImageBytes: 10 * 1024 * 1024 },
   // POST/DELETE /{page_post_id} with the Page token — https://developers.facebook.com/docs/pages-api/posts

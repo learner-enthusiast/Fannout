@@ -25,3 +25,10 @@ export const YOUTUBE_SCOPES = {
  * the last). https://developers.google.com/youtube/v3/guides/using_resumable_upload_protocol
  */
 export const YOUTUBE_UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024;
+
+/** Image posts in the YouTube app take up to 10 images. There is no Data API v3 endpoint for them. */
+export const YOUTUBE_COMMUNITY_POST_MAX_IMAGES = 10;
+/** Fannout's own cap for the text of a manual image post (YouTube documents no limit). */
+export const YOUTUBE_COMMUNITY_POST_MAX = 5000;
+export const YOUTUBE_VIDEO_ID_PATTERN = /^[A-Za-z0-9_-]{11}$/;
+export const youtubeStudioEditUrl = (videoId: string) => `https://studio.youtube.com/video/${videoId}/edit`;

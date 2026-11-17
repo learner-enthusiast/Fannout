@@ -18,6 +18,7 @@ export {
   listObjects,
   moveObject,
   objectExists,
+  readObjectHead,
   updateObject,
   updateObjectMetadata,
   uploadObject,
@@ -33,4 +34,5 @@ export {
   getUploadPartUrls,
   MAX_MULTIPART_PARTS,
   partCount,
+  signUploadParts,
 } from "./multipart";

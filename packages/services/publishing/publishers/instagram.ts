@@ -180,6 +180,17 @@ async function checkQuota(provider: InstagramProvider) {
   }
 }
 
+/** user_tags for one media item: photos carry x/y, videos never do. */
+function imageTags(input: InstagramComposeInput, mediaIndex: number) {
+  const tags = (input.userTags ?? []).filter((tag) => tag.mediaIndex === mediaIndex && tag.x !== undefined && tag.y !== undefined);
+  return tags.length ? { user_tags: tags.map((tag) => ({ username: tag.username, x: tag.x!, y: tag.y! })) } : {};
+}
+function videoTags(input: InstagramComposeInput, mediaIndex: number) {
+  const tags = (input.userTags ?? []).filter((tag) => tag.mediaIndex === mediaIndex);
+  return tags.length ? { user_tags: tags.map((tag) => ({ username: tag.username })) } : {};
+}
+const collaboratorsOf = (input: InstagramComposeInput) => (input.collaborators?.length ? { collaborators: input.collaborators } : {});
+
 async function createSingleContainer(provider: InstagramProvider, ctx: PublishContext, type: InstagramPostType): Promise<string> {
   const input = ctx.input as InstagramComposeInput;
   const caption = input.caption?.trim() ? { caption: input.caption } : {};
@@ -194,12 +205,16 @@ async function createSingleContainer(provider: InstagramProvider, ctx: PublishCo
         share_to_feed: input.shareToFeed ?? true,
         // cover_url wins over thumb_offset.
         ...(cover ? { cover_url: cover.url } : input.thumbOffsetMs !== undefined ? { thumb_offset: input.thumbOffsetMs } : {}),
-        ...(input.collaborators?.length ? { collaborators: input.collaborators } : {}),
+        ...collaboratorsOf(input),
+        ...videoTags(input, 0),
       })
     ).id;
   }
   const image = await urlSource(ctx.media[0]!);
-  return (await provider.createImageContainer({ image_url: image.url, ...caption, ...(input.altText?.trim() ? { alt_text: input.altText } : {}) })).id;
+  const alt = (input.altTexts?.[ctx.media[0]!.id] ?? input.altText)?.trim();
+  return (
+    await provider.createImageContainer({ image_url: image.url, ...caption, ...(alt ? { alt_text: alt } : {}), ...collaboratorsOf(input), ...imageTags(input, 0) })
+  ).id;
 }
 
 /** Carousel: children first (each id saved immediately), then the parent once every child is FINISHED. */
@@ -210,7 +225,12 @@ async function carouselUnit(provider: InstagramProvider, ctx: PublishContext): P
     await ctx.save({}, "Sending photos to Instagram");
     for (const [index, item] of ctx.media.entries()) {
       if (children[index]) continue;
-      children[index] = (await provider.createCarouselItem({ image_url: (await urlSource(item)).url })).id;
+      const childInput = ctx.input as InstagramComposeInput;
+      const alt = childInput.altTexts?.[item.id]?.trim();
+      // Tags go on each child, never on the carousel parent.
+      children[index] = (
+        await provider.createCarouselItem({ image_url: (await urlSource(item)).url, ...(alt ? { alt_text: alt } : {}), ...imageTags(childInput, index) })
+      ).id;
       await ctx.save({ childIds: children, containerCreatedAt: (ctx.progress as Progress).containerCreatedAt ?? new Date().toISOString(), pollCount: 0 });
     }
   }
@@ -221,7 +241,7 @@ async function carouselUnit(provider: InstagramProvider, ctx: PublishContext): P
   }
   if (!(ctx.progress as Progress).containerId) {
     const input = ctx.input as InstagramComposeInput;
-    const parent = await provider.createCarouselContainer({ children, ...(input.caption?.trim() ? { caption: input.caption } : {}) });
+    const parent = await provider.createCarouselContainer({ children, ...(input.caption?.trim() ? { caption: input.caption } : {}), ...collaboratorsOf(input) });
     await ctx.save({ containerId: parent.id, containerCreatedAt: new Date().toISOString(), containerReady: false, pollCount: 0 });
   }
   return pollContainer(provider, ctx, (ctx.progress as Progress).containerId!, "container");

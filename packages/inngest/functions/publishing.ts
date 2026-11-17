@@ -7,19 +7,23 @@ import {
   claimPost,
   classifyPublishError,
   markPostFailed,
+  markPostMediaMissed,
   PermanentPublishError,
+  postMediaIssues,
+  postMediaState,
   postSummary,
   queuedPostsInBatch,
   runPublishPhase,
   setPostStep,
 } from "@repo/services/publishing/run";
 import { completeSchedule, isScheduleCurrent } from "@repo/services/scheduling";
+import { STUCK_AFTER_MS } from "@repo/services/scheduling/model";
 import { UPLOAD_CONFIG } from "@repo/services/publishing/upload/config";
 import type { PrepareStep } from "@repo/services/publishing/upload/progress";
 import type { GetStepTools } from "inngest";
 import { z } from "zod";
 import { inngest } from "../client";
-import { notificationCreate, postDeleteRequested, postPublishRequested, postsBatchNameRequested, postsBatchRequested } from "../events";
+import { mediaReady, notificationCreate, postDeleteRequested, postPublishRequested, postsBatchNameRequested, postsBatchRequested } from "../events";
 
 type Step = GetStepTools<typeof inngest>;
 
@@ -77,6 +81,41 @@ async function afterFinish(step: Step, postId: string, attempt: number) {
     ),
   );
 
+  // Manual follow-ups are notifications + a task on the post; they never block or fail the publish.
+  if (ok && summary.relatedVideo) {
+    await step.sendEvent(
+      "notify-related-video",
+      notificationCreate.create(
+        {
+          userId: summary.userId,
+          type: "post_task",
+          title: "Set related video in YouTube Studio",
+          body: `YouTube's API can't link a related video. Open the ${summary.relatedVideo.isShort ? "Short" : "video"} in YouTube Studio and choose "${summary.relatedVideo.title}".`,
+          link: batchLink(summary.batchId),
+          postId,
+          data: { task: "related_video", studioUrl: summary.relatedVideo.studioUrl },
+        },
+        { id: `post-task-related-video:${postId}` },
+      ),
+    );
+  }
+  if (ok && summary.tagsDropped.length) {
+    await step.sendEvent(
+      "notify-tags-dropped",
+      notificationCreate.create(
+        {
+          userId: summary.userId,
+          type: "post_warning",
+          title: `Posted to ${label} without tags`,
+          body: `Posted without tags: ${summary.tagsDropped.map((username) => `@${username}`).join(", ")} couldn't be tagged.`,
+          link: batchLink(summary.batchId),
+          postId,
+        },
+        { id: `post-tags-dropped:${postId}` },
+      ),
+    );
+  }
+
   if (!summary.batchId) return;
   const batch = await step.run("batch-progress", () => batchProgress(summary.batchId!));
   if (!batch.finished || !batch.userId) return;
@@ -100,12 +139,103 @@ async function afterFinish(step: Step, postId: string, attempt: number) {
   );
 }
 
+/** await-media: one wait per pending file, re-checking Postgres after each. */
+const AWAIT_MEDIA = {
+  WAIT_MS: 15 * 60 * 1000,
+  CAP_MS: 24 * 60 * 60 * 1000,
+  /** CAP_MS / WAIT_MS plus slack for early wake-ups (each ready file ends a wait). */
+  MAX_ROUNDS: 120,
+  /** Scheduled posts stop waiting this long before the sweeper's "stuck" cut-off. */
+  SCHEDULE_MARGIN_MS: 2 * 60 * 1000,
+} as const;
+
+type AwaitMediaResult = { ok: true } | { ok: false; code: string; message: string };
+
+/**
+ * First step after claim: posts can be created while their files still
+ * upload. Reads media statuses from Postgres (not the cache); all ready →
+ * continue; a required file failed → fail the post; otherwise
+ * step.waitForEvent("media/ready") for one pending file (timeout 15 min) and
+ * re-check — the DB check before each wait covers an event that arrived early.
+ * Cap: 24 h (instant) or the schedule's late window (scheduled → missed).
+ * A thumbnail that isn't ready is optional: publish without it and notify.
+ */
+async function awaitMedia(step: Step, postId: string, publishAt: string | undefined): Promise<AwaitMediaResult> {
+  let deadline: number | null = null;
+  for (let round = 0; round < AWAIT_MEDIA.MAX_ROUNDS; round++) {
+    // `now` comes from the memoized step so replays take the same path.
+    const { state, now } = await step.run(`await-media:check:${round}`, async () => ({ state: await postMediaState(postId), now: Date.now() }));
+    deadline ??= publishAt
+      ? Math.min(now + AWAIT_MEDIA.CAP_MS, new Date(publishAt).getTime() + STUCK_AFTER_MS - AWAIT_MEDIA.SCHEDULE_MARGIN_MS)
+      : now + AWAIT_MEDIA.CAP_MS;
+
+    if (state.failed) {
+      const message = `Upload failed: ${state.failed}. Pick the file again and retry the post.`;
+      await step.run("await-media:failed", () => markPostFailed(postId, "media_failed", message));
+      return { ok: false, code: "media_failed", message };
+    }
+
+    if (state.ready) {
+      // Processing now knows durations and real file types: apply the platform rules again.
+      const issues = await step.run("await-media:recheck", () => postMediaIssues(postId));
+      if (issues.length) {
+        const message = issues.join(" ");
+        await step.run("await-media:invalid", () => markPostFailed(postId, "validation", message));
+        return { ok: false, code: "validation", message };
+      }
+      if (state.thumbnailMissing) {
+        const summary = await step.run("await-media:load-post", () => postSummary(postId));
+        if (summary) {
+          await step.sendEvent(
+            "await-media:notify-thumbnail",
+            notificationCreate.create(
+              {
+                userId: summary.userId,
+                type: "post_warning",
+                title: "Posting without the thumbnail",
+                body: `${state.thumbnailMissing.name} wasn't uploaded in time, so the video is published without it. You can set the thumbnail on the platform afterwards.`,
+                link: batchLink(summary.batchId),
+                postId,
+              },
+              { id: `post-thumbnail-skipped:${postId}` },
+            ),
+          );
+        }
+      }
+      return { ok: true };
+    }
+
+    const names = state.pending.map((m) => m.name).join(", ");
+    const remaining = deadline - now;
+    if (remaining <= 0) {
+      if (publishAt) {
+        const message = `Upload didn't finish before the scheduled time: re-select ${names} in the post, then choose “Publish now”.`;
+        await step.run("await-media:missed", () => markPostMediaMissed(postId, message));
+        return { ok: false, code: "media_not_ready", message };
+      }
+      const message = `Upload didn't finish: re-select ${names} in the post to retry.`;
+      await step.run("await-media:timeout", () => markPostFailed(postId, "media_not_ready", message));
+      return { ok: false, code: "media_not_ready", message };
+    }
+    if (round === 0) await step.run("await-media:waiting", () => setPostStep(postId, "Waiting for uploads to finish"));
+    const next = state.pending[0]!;
+    await step.waitForEvent(`await-media:wait:${round}`, {
+      event: mediaReady,
+      timeout: `${Math.ceil(Math.min(AWAIT_MEDIA.WAIT_MS, remaining) / 1000)}s`,
+      if: `async.data.mediaId == "${next.id}"`,
+    });
+  }
+  const message = "Upload didn't finish: re-select the files in the post to retry.";
+  await step.run("await-media:exhausted", () => markPostFailed(postId, "media_not_ready", message));
+  return { ok: false, code: "media_not_ready", message };
+}
+
 /**
  * post/publish.requested → publish with the platform's existing provider.
  * One at a time per account; transient errors retry (resuming from
  * posts.config.progress), validation/auth errors fail at once.
  *
- * Steps: claim → prepare (uploads) → [scheduled: sleepUntil(publishAt) →
+ * Steps: claim → await-media (files still uploading) → prepare (uploads) → [scheduled: sleepUntil(publishAt) →
  * re-check the schedule in the DB] → finalize (make it live) → notify.
  * Instant posts run prepare + finalize back to back.
  */
@@ -140,6 +270,12 @@ export const publishPost = inngest.createFunction(
     // Also the idempotency guard: a post that already has external_post_id is never claimed.
     const claimed = await step.run("claim", () => claimPost(postId, scheduleVersion ?? null));
     if (!claimed) return { skipped: true };
+
+    const media = await awaitMedia(step, postId, scheduled ? publishAt : undefined);
+    if (!media.ok) {
+      await afterFinish(step, postId, attempt);
+      return { status: "failed" as const, code: media.code, message: media.message };
+    }
 
     const run = <T>(id: string, fn: () => Promise<T>) =>
       step.run(id, async () => {

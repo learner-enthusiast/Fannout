@@ -4,7 +4,7 @@ Fannout lets a person prepare media once and fan it out to connected social plat
 Use this guide when acting through the HTTP API with a scoped personal API key.
 This document is the contract. Follow it exactly.
 
-Generated from code at b048acf on 2026-11-13. Do not edit generated sections by hand.
+Generated from code at b57b781 on 2026-11-17. Do not edit generated sections by hand.
 
 ## Authentication
 
@@ -17,11 +17,11 @@ Send `Authorization: Bearer fn_live_…`. Create keys in **Settings → API keys
 | Scope | Operations |
 | --- | --- |
 | `posts:read` | GET /analytics/best-times<br>GET /analytics/overview<br>GET /analytics/posts/{postId}<br>GET /analytics/sync-status<br>GET /analytics/top-posts<br>GET /mentions/search<br>GET /notifications<br>GET /notifications/unread-count<br>GET /posts/batches<br>GET /posts/batches/{batchId}<br>GET /posts/{postId}<br>POST /analytics/{connectionId}/refresh |
-| `posts:write` | DELETE /mentions/{id}<br>PATCH /mentions/{id}<br>PATCH /posts/{postId}<br>POST /mentions<br>POST /notifications/read<br>POST /notifications/read-all<br>POST /posts/batches<br>POST /posts/validate<br>POST /posts/{postId}/cancel-schedule<br>POST /posts/{postId}/publish-now<br>POST /posts/{postId}/repost<br>POST /posts/{postId}/reschedule<br>POST /posts/{postId}/retry |
+| `posts:write` | DELETE /mentions/{id}<br>PATCH /mentions/{id}<br>PATCH /posts/{postId}<br>POST /mentions<br>POST /mentions/x/resolve<br>POST /notifications/read<br>POST /notifications/read-all<br>POST /posts/batches<br>POST /posts/validate<br>POST /posts/{postId}/cancel-schedule<br>POST /posts/{postId}/manual-posted<br>POST /posts/{postId}/publish-now<br>POST /posts/{postId}/repost<br>POST /posts/{postId}/reschedule<br>POST /posts/{postId}/retry<br>POST /posts/{postId}/tasks/related-video/done |
 | `posts:delete` | DELETE /posts/{postId}<br>POST /posts/batches/{batchId}/delete |
-| `media:read` | GET /folders<br>GET /folders/{folderId}<br>GET /folders/{folderId}/items<br>GET /media<br>GET /media/{mediaId}<br>GET /search |
-| `media:write` | DELETE /folders/{folderId}<br>DELETE /folders/{folderId}/items/{mediaId}<br>DELETE /media/{mediaId}<br>PATCH /folders/{folderId}<br>PATCH /folders/{folderId}/items/{mediaId}<br>PATCH /media/{mediaId}<br>POST /folders<br>POST /folders/from-suggestion<br>POST /folders/{folderId}/items<br>POST /media/uploads<br>POST /media/{mediaId}/complete<br>POST /media/{mediaId}/fail<br>PUT /folders/{folderId}/order |
-| `connections:read` | GET /platforms/youtube/{socialConnectionId}/categories<br>GET /platforms/youtube/{socialConnectionId}/playlists<br>GET /social-connections<br>GET /social-connections/providers |
+| `media:read` | GET /folders<br>GET /folders/{folderId}<br>GET /folders/{folderId}/items<br>GET /media<br>GET /media/{mediaId}<br>GET /search<br>POST /media/zip |
+| `media:write` | DELETE /folders/{folderId}<br>DELETE /folders/{folderId}/items/{mediaId}<br>DELETE /media/{mediaId}<br>PATCH /folders/{folderId}<br>PATCH /folders/{folderId}/items/{mediaId}<br>PATCH /media/{mediaId}<br>POST /folders<br>POST /folders/from-suggestion<br>POST /folders/{folderId}/items<br>POST /media/uploads<br>POST /media/{mediaId}/complete<br>POST /media/{mediaId}/fail<br>POST /media/{mediaId}/parts<br>PUT /folders/{folderId}/order |
+| `connections:read` | GET /platforms/youtube/{socialConnectionId}/categories<br>GET /platforms/youtube/{socialConnectionId}/playlists<br>GET /platforms/youtube/{socialConnectionId}/uploads<br>GET /platforms/youtube/{socialConnectionId}/video<br>GET /social-connections<br>GET /social-connections/providers |
 | `ai:generate` | GET /ai/generations/{generationId}<br>GET /ai/instruction-presets<br>POST /ai/generations<br>POST /ai/instruction-presets |
 
 ## Rate limits
@@ -63,10 +63,12 @@ The tRPC/OpenAPI error envelope is `{ "error": { "message": string, "code": stri
 
 ### Upload media
 
-1. `POST /media/uploads` (`media:write`) to get `mediaId`, `partSize`, and presigned part URLs.
-2. PUT every byte range directly to its corresponding presigned URL; collect the response ETags.
+1. `POST /media/uploads` (`media:write`) to get `mediaId`, `partSize`, `partCount` and presigned URLs for the first parts (up to 100; `presignLimit` sets fewer). The media exists at once with status `uploading`. Send `fingerprint` to reuse an identical ready file: then `reused` is true and there is nothing to upload.
+2. PUT every byte range directly to its presigned URL; collect the response ETags. Get URLs for the remaining parts, or fresh ones after they expire (12 h), with `POST /media/{mediaId}/parts`.
 3. `POST /media/{mediaId}/complete` with the ETags.
-4. Poll `GET /media/{mediaId}` (`media:read`) until `status` is `ready` or `failed`. Do not publish failed media.
+4. Poll `GET /media/{mediaId}` (`media:read`) until `status` is `ready` or `failed`.
+
+You don't have to wait for `ready` before posting: `POST /posts` accepts media that is `uploading`, `uploaded` or `processing` (never `failed`). The publish job waits for the files (up to 24 h, or the scheduled time's late window) and fails the post if a file fails. A thumbnail that isn't ready in time is skipped.
 
 ### Organize media
 
@@ -75,6 +77,22 @@ Create a folder with `POST /folders`, then use `POST /folders/{folderId}/items` 
 ### Generate captions (optional)
 
 Call `POST /ai/generations`, then poll `GET /ai/generations/{generationId}` until `status` is `succeeded` or `failed`. Review generated content before publishing.
+
+- Sources, in priority order: `jsonMediaId` (the author's draft per platform: kept in angle and claims, expanded to the platform's length), `subtitleMediaId` (extra facts and the only source of YouTube chapter timestamps), `photoMediaIds` (photo posts: image/carousel copy and alt texts). At least one is required.
+- Each platform is written with its own playbook for the post type (`video`, `short`, `image`, `carousel`) and aims for the field's `aiBands` in the platform capabilities (always within `maxLength`, in the field's `countMode`). `targets[socialConnectionId]` in the result says which playbook and source were used.
+- `issues` are notes, not failures: "Shortened automatically…" (trimmed to the hard limit) or "Shorter than target…" (the source didn't have more material; text is never padded).
+- `targets[].hookOnly` with `current` rewrites only the title (YouTube) or the first line of the main text.
+- Generation only returns values. Nothing is published until you call `POST /posts/batches`.
+- `targets[].context` (tagged usernames, collaborators, the YouTube related video) is context only: AI may mention a tagged person once, and never adds tags or people you didn't choose.
+
+## Tags, collaborators, manual posts and follow-up tasks
+
+Read each platform's capabilities first: `carouselMode`, `carouselMax`, `tagging` and `collaborators` say what is possible.
+
+- **Instagram tags** go in `targets[].input.userTags` as `{ mediaIndex, username, x?, y? }` (`mediaIndex` 0 for a single photo or a Reel). Photos need `x` and `y` (0.0–1.0 from the left / top); Reels take `username` only. At most 20 per media item, public accounts only. `collaborators` (up to 3) works on photos, carousels and Reels; each one must accept the invite in Instagram. If Instagram rejects a tag the post fails with Instagram's message.
+- **X tags** go in `targets[].input.taggedUsers` as `{ username, xUserId }` (max 10 per post, images or a video). Get `xUserId` from `POST /mentions/x/resolve`; the id is saved, so each username is looked up (and billed by X) once. If X rejects the tags, the post is sent once more without them and you get a `post_warning` notification; the post's `warning` names who was dropped.
+- **Manual posts.** When a platform's `carouselMode` is `manual` (YouTube image posts: 2–10 photos), `POST /posts/batches` stores the post with status `draft` and `manual.status = pending` and never publishes it. Send only the manual fields (`communityText`). Download the images with `POST /media/zip`, publish by hand, then call `POST /posts/{postId}/manual-posted` (optional `postUrl`). `GET /posts/batches?filter=manual` lists what is still waiting.
+- **YouTube related video.** Put `relatedVideo: { videoId, title, watchNext? }` in the YouTube input (pick from `GET /platforms/youtube/{socialConnectionId}/uploads`, or resolve a link with `GET /platforms/youtube/{socialConnectionId}/video`). YouTube's API cannot set a related video, so after publishing the post carries a `relatedVideo` task with a `studioUrl`; close it with `POST /posts/{postId}/tasks/related-video/done`. For long-form videos `watchNext` (default true) adds a "Watch next" link above the hashtags; it is never added to Shorts.
 
 ### Validate and publish
 
@@ -138,7 +156,12 @@ Fields for `targets[].input` when the account is Instagram:
 | shareToFeed | boolean | required | true | default: true | Reels only: also show the reel in the profile feed grid (default true). |
 | thumbOffsetMs | integer | optional | — | min 0; max 9007199254740991 | Reels only: millisecond offset of the video frame used as cover. Ignored when a cover image is picked. |
 | altText | string | optional | — | max length 1000 | Image alt text (max 1,000 characters). Photos only; ignored for reels. |
-| collaborators | string[] | optional | — | max items 3 | Reels only: up to 3 Instagram usernames to invite as collaborators (no @). |
+| altTexts | object | optional | — | — | Photos only: media ID → alt text for that photo (max 1,000 characters each). Wins over altText for the photos it names. |
+| collaborators | string[] | optional | — | max items 3 | Up to 3 Instagram usernames to invite as collaborators on a photo, carousel or Reel (no @). Each one must accept the invite in Instagram. |
+| userTags[].mediaIndex | integer | optional | — | min 0; max 19 | Which media item of this account's post, in its order (0 for a single photo or a Reel). |
+| userTags[].username | string | optional | — | pattern ^[A-Za-z0-9_.]{1,30}$ | Instagram username without @ (letters, numbers, . and _, 1–30 characters). |
+| userTags[].x | unknown | optional | — | — | Photos only: horizontal position from the left, 0.0–1.0. |
+| userTags[].y | unknown | optional | — | — | Photos only: vertical position from the top, 0.0–1.0. |
 
 Minimal valid `input` (required fields only):
 
@@ -217,6 +240,8 @@ Fields for `targets[].input` when the account is X:
 | replySettings | everyone \| following \| mentionedUsers \| verified \| subscribers | required | "everyone" | enum: everyone, following, mentionedUsers, verified, subscribers; default: "everyone" | Choose who can reply. Everyone omits reply_settings in POST /2/tweets. |
 | madeWithAi | boolean | optional | — | — | Label the media as made with AI. |
 | paidPartnership | boolean | optional | — | — | Label the post as a paid partnership. |
+| taggedUsers[].username | string | optional | — | pattern ^[A-Za-z0-9_]{1,15}$ | X username without @. |
+| taggedUsers[].xUserId | string | optional | — | pattern ^\d{1,19}$ | That account's numeric X user ID (from POST /mentions/x/resolve). |
 
 Minimal valid `input` (required fields only):
 
@@ -246,6 +271,10 @@ Fields for `targets[].input` when the account is YouTube:
 | tags | string[] | optional | — | max length 500; max items 50 | Keywords (each 1–100 chars, at most 50 tags, 500 characters in total). |
 | playlistId | string | optional | — | min length 1 | Playlist ID to add the video to, from GET /platforms/youtube/{socialConnectionId}/playlists. |
 | notifySubscribers | boolean | optional | — | — | Notify channel subscribers about the upload (default true). |
+| relatedVideo.videoId | string | optional | — | pattern ^[A-Za-z0-9_-]{11}$ | ID of a video on the same channel (from GET /platforms/youtube/{socialConnectionId}/uploads). |
+| relatedVideo.title | string | optional | — | min length 1; max length 200 | That video's title, shown in the task and the Watch next line. |
+| relatedVideo.watchNext | boolean | optional | — | — | Long-form only: add "Watch next: <title> https://youtu.be/<videoId>" above the hashtags (default true). |
+| communityText | string | optional | — | max length 5000 | Text of a YouTube image post (2–10 photos). YouTube has no API for image posts: Fannout stores it as a manual post for you to publish in the YouTube app. |
 
 Minimal valid `input` (required fields only):
 
@@ -318,12 +347,23 @@ curl -X POST "${API_PUBLIC_URL}/api/ai/instruction-presets" \
 
 | Field | Type | Required | Default | Constraints | Description |
 | --- | --- | --- | --- | --- | --- |
-| jsonMediaId | string (uuid) | optional | — | format uuid | Social-package JSON media to write from. jsonMediaId or subtitleMediaId is required. |
-| subtitleMediaId | string (uuid) | optional | — | format uuid | Subtitle media (.srt/.vtt) to write from. jsonMediaId or subtitleMediaId is required. |
-| videoMediaId | string (uuid) | optional | — | format uuid | Video the content is for (adds its duration/orientation as context). |
+| jsonMediaId | string (uuid) | optional | — | format uuid | Social-package JSON media to write from (first priority: the author's draft). One of jsonMediaId, subtitleMediaId or photoMediaIds is required. |
+| subtitleMediaId | string (uuid) | optional | — | format uuid | Subtitle media (.srt/.vtt) to write from (second priority; the only source of chapter timestamps). |
+| photoMediaIds | string (uuid)[] | optional | — | min items 1; max items 20 | Photo posts: the photos in slide order. AI looks at the first 10 (downscaled) and writes image/carousel copy and alt texts. |
+| videoMediaId | string (uuid) | optional | — | format uuid | Video the content is for (adds its duration/orientation as context). May still be uploading or processing; then send videoMeta. |
+| videoMeta.durationSeconds | number \| null | optional | — | min 0 | Video length in seconds as read locally. |
+| videoMeta.width | integer \| null | optional | — | max 9007199254740991 | Pixel width as read locally. |
+| videoMeta.height | integer \| null | optional | — | max 9007199254740991 | Pixel height as read locally. |
 | targets[].socialConnectionId | string (uuid) | required | — | format uuid | Account to write content for. |
 | targets[].fields | string[] | optional | — | min items 1; max items 10 | Compose fields to fill (see each platform's ai fields); omit for all of them. |
 | targets[].instruction | string | optional | — | max length 500 | Instructions for this account only; combined with globalInstruction and wins on conflicts. |
+| targets[].photoMediaIds | string (uuid)[] | optional | — | min items 1; max items 20 | Photo posts: this account's subset/order of photoMediaIds (same as targets[].mediaIds when publishing). |
+| targets[].context.taggedUsernames | string[] | optional | — | max items 40 | People already tagged on this account's media (usernames without @). |
+| targets[].context.collaborators | string[] | optional | — | max items 10 | Collaborators invited on this post. |
+| targets[].context.watchNext.videoId | string | optional | — | pattern ^[A-Za-z0-9_-]{11}$ | YouTube video ID. |
+| targets[].context.watchNext.title | string | optional | — | min length 1; max length 200 | Its title. |
+| targets[].hookOnly | boolean | optional | — | — | Rewrite only the title (YouTube) or the first line of the main text; needs `current`. |
+| targets[].current | object | optional | — | — | hookOnly: the account's current compose text by field name, so the rest of the text is kept. |
 | globalInstruction | string | optional | — | max length 500 | Instructions applied to every target, e.g. a required title prefix; cannot override facts or platform limits. |
 
 #### Example request
@@ -387,6 +427,7 @@ curl -X GET "${API_PUBLIC_URL}/api/ai/generations/00000000-0000-4000-8000-000000
 | issues[].socialConnectionId | string (uuid) | — | format uuid | Account the issue is about. |
 | issues[].field | string | — | — | Compose field name. |
 | issues[].message | string | — | — | What went wrong for that field. |
+| targets | object | — | — | socialConnectionId → how that account's copy was written. |
 | error | object \| null | — | — | Set when status is failed. |
 
 #### Example response
@@ -407,6 +448,14 @@ curl -X GET "${API_PUBLIC_URL}/api/ai/generations/00000000-0000-4000-8000-000000
       "message": "x"
     }
   ],
+  "targets": {
+    "example": {
+      "platform": "x",
+      "postType": "video",
+      "source": "json",
+      "promptVersion": "x"
+    }
+  },
   "error": {
     "code": "x",
     "message": "x"
@@ -1752,8 +1801,11 @@ curl -X POST "${API_PUBLIC_URL}/api/media/00000000-0000-4000-8000-000000000000/c
 | --- | --- | --- | --- | --- | --- |
 | filename | string | required | — | min length 1; max length 255 | Original filename including extension (.mp4, .jpg, .srt, .vtt, .json …). |
 | mimeType | string | required | — | max length 255 | MIME type of the file (video/*, image/*, application/json); may be empty for .srt/.vtt. |
-| sizeBytes | integer | required | — | max 5368709120 | Exact file size in bytes. Videos/images up to 5 GiB; subtitles and JSON up to 1 MiB. |
+| sizeBytes | integer | required | — | max 104857600000 | Exact file size in bytes. Videos/images up to the largest platform video limit (see GET /platforms/capabilities, capped by storage); subtitles and JSON up to 1 MiB. |
 | name | string | optional | — | min length 1; max length 200 | Display name (1–200 chars); defaults to the filename without its extension. |
+| slot | video \| photos \| thumbnail \| subtitles \| json | optional | — | enum: video, photos, thumbnail, subtitles, json | Compose slot the file is for (video, photos, thumbnail, subtitles, json); the file type must match it. |
+| fingerprint | string | optional | — | pattern ^\d+-\d+-[0-9a-f]{64}$ | Quick fingerprint "<size>-<lastModified ms>-<sha256 hex of the first 1 MB>". When a ready media with the same fingerprint exists, it is returned with reused=true and nothing is uploaded. |
+| presignLimit | integer | optional | — | min 0; max 100 | How many part URLs to presign now (default: all parts, at most 100). Get the rest with POST /media/{mediaId}/parts. |
 
 #### Example request
 
@@ -1772,7 +1824,10 @@ curl -X POST "${API_PUBLIC_URL}/api/media/uploads" \
 
 | Field | Type | Default | Constraints | Description |
 | --- | --- | --- | --- | --- |
-| mediaId | string (uuid) | — | format uuid | ID of the new media item (status uploading). |
+| mediaId | string (uuid) | — | format uuid | ID of the new media item (status uploading), or of the existing ready media when reused. |
+| reused | boolean | — | — | True when an identical ready file (same fingerprint) was found: nothing to upload, parts is empty. |
+| uploadId | string \| null | — | — | S3 multipart upload ID; null when reused. |
+| partCount | integer | — | min 0; max 9007199254740991 | Total number of parts to upload (0 when reused). |
 | partSize | integer | — | max 9007199254740991 | Bytes per part; part N covers bytes [(N-1)*partSize, N*partSize). |
 | parts[].partNumber | integer | — | max 9007199254740991 | 1-based part number. |
 | parts[].url | string (uri) | — | format uri | Presigned URL; PUT this part's bytes here and keep the ETag response header. |
@@ -1782,6 +1837,9 @@ curl -X POST "${API_PUBLIC_URL}/api/media/uploads" \
 ```json
 {
   "mediaId": "00000000-0000-4000-8000-000000000000",
+  "reused": false,
+  "uploadId": "x",
+  "partCount": 0,
   "partSize": 1,
   "parts": [
     {
@@ -2210,6 +2268,104 @@ curl -X PATCH "${API_PUBLIC_URL}/api/media/00000000-0000-4000-8000-000000000000"
 }
 ```
 
+### Media · Sign Upload Parts
+
+**POST /media/{mediaId}/parts** — Presign (or re-sign) part URLs for an upload in progress
+
+- Required scope: `media:write`
+- Rate limit: none beyond the API-key `api` bucket
+- Possible errors: `UNAUTHORIZED`, `FORBIDDEN`, `TOO_MANY_REQUESTS`, `VALIDATION`, `BAD_REQUEST`, `NOT_FOUND`, `CONFLICT`, `INTERNAL`
+
+#### Request
+
+| Field | Type | Required | Default | Constraints | Description |
+| --- | --- | --- | --- | --- | --- |
+| mediaId | string (uuid) | required | — | format uuid | Media ID of an upload in progress. |
+| partNumbers | integer[] | required | — | min items 1; max items 100 | Parts to (re)sign, at most 100 per call (expired URLs, the rest of a large file, or resuming after a reload). |
+
+#### Example request
+
+```bash
+curl -X POST "${API_PUBLIC_URL}/api/media/00000000-0000-4000-8000-000000000000/parts" \
+  -H "Authorization: Bearer $FANNOUT_API_KEY" \
+  -H 'Content-Type: application/json' \
+  --data '{
+  "mediaId": "00000000-0000-4000-8000-000000000000",
+  "partNumbers": [
+    1
+  ]
+}'
+```
+
+#### Response
+
+| Field | Type | Default | Constraints | Description |
+| --- | --- | --- | --- | --- |
+| mediaId | string (uuid) | — | format uuid | Media ID. |
+| partSize | integer | — | max 9007199254740991 | Bytes per part. |
+| parts[].partNumber | integer | — | max 9007199254740991 | 1-based part number. |
+| parts[].url | string (uri) | — | format uri | Presigned PUT URL for this part (valid 12 h). |
+
+#### Example response
+
+```json
+{
+  "mediaId": "00000000-0000-4000-8000-000000000000",
+  "partSize": 1,
+  "parts": [
+    {
+      "partNumber": 1,
+      "url": "https://example.com/resource"
+    }
+  ]
+}
+```
+
+### Media · Zip
+
+**POST /media/zip** — Download several of your images as one zip, in the given order
+
+- Required scope: `media:read`
+- Rate limit: none beyond the API-key `api` bucket
+- Possible errors: `UNAUTHORIZED`, `FORBIDDEN`, `TOO_MANY_REQUESTS`, `VALIDATION`, `BAD_REQUEST`, `NOT_FOUND`, `CONFLICT`, `INTERNAL`
+
+#### Request
+
+| Field | Type | Required | Default | Constraints | Description |
+| --- | --- | --- | --- | --- | --- |
+| mediaIds | string (uuid)[] | required | — | min items 1; max items 20 | Your image media IDs, in slide order. |
+
+#### Example request
+
+```bash
+curl -X POST "${API_PUBLIC_URL}/api/media/zip" \
+  -H "Authorization: Bearer $FANNOUT_API_KEY" \
+  -H 'Content-Type: application/json' \
+  --data '{
+  "mediaIds": [
+    "00000000-0000-4000-8000-000000000000"
+  ]
+}'
+```
+
+#### Response
+
+| Field | Type | Default | Constraints | Description |
+| --- | --- | --- | --- | --- |
+| filename | string | — | — | Suggested file name. |
+| base64 | string | — | — | The .zip file, base64-encoded. Entries are numbered in slide order. |
+| count | integer | — | min -9007199254740991; max 9007199254740991 | Images in the archive. |
+
+#### Example response
+
+```json
+{
+  "filename": "x",
+  "base64": "x",
+  "count": -9007199254740991
+}
+```
+
 ### Mentions · Create
 
 **POST /mentions** — Save an X/Threads handle, LinkedIn URN or Facebook Page mention contact
@@ -2248,7 +2404,7 @@ curl -X POST "${API_PUBLIC_URL}/api/mentions" \
 | platform | x \| threads \| instagram \| linkedin \| facebook | — | enum: x, threads, instagram, linkedin, facebook | Platform the contact belongs to. |
 | displayName | string | — | — | Label shown in the composer. |
 | handle | string \| null | — | — | X/Threads/Instagram username without @. |
-| platformRef | string \| null | — | — | LinkedIn URN or numeric Facebook Page ID. |
+| platformRef | string \| null | — | — | LinkedIn URN, numeric Facebook Page ID, or (X) the account's numeric user ID once it was resolved for tagging. |
 | avatarUrl | string \| null | — | — | Optional avatar URL. |
 | useCount | integer | — | min 0; max 9007199254740991 | Times this contact was used in a published post. |
 | lastUsedAt | string (date-time) \| null | — | format date-time | When the contact was last used in a published post. |
@@ -2306,6 +2462,51 @@ curl -X DELETE "${API_PUBLIC_URL}/api/mentions/00000000-0000-4000-8000-000000000
 }
 ```
 
+### Mentions · Resolve X
+
+**POST /mentions/x/resolve** — Resolve an X username to its user ID for media tags (saved; looked up once)
+
+- Required scope: `posts:write`
+- Rate limit: publish (10/60s, 100/86400s; plus API key api 60/60s)
+- Possible errors: `UNAUTHORIZED`, `FORBIDDEN`, `TOO_MANY_REQUESTS`, `VALIDATION`, `BAD_REQUEST`, `NOT_FOUND`, `CONFLICT`, `INTERNAL`
+
+#### Request
+
+| Field | Type | Required | Default | Constraints | Description |
+| --- | --- | --- | --- | --- | --- |
+| socialConnectionId | string (uuid) | required | — | format uuid | A connected X account (the lookup runs in its user context). |
+| username | unknown | required | — | — | X username, with or without @. |
+
+#### Example request
+
+```bash
+curl -X POST "${API_PUBLIC_URL}/api/mentions/x/resolve" \
+  -H "Authorization: Bearer $FANNOUT_API_KEY" \
+  -H 'Content-Type: application/json' \
+  --data '{
+  "socialConnectionId": "00000000-0000-4000-8000-000000000000",
+  "username": "x"
+}'
+```
+
+#### Response
+
+| Field | Type | Default | Constraints | Description |
+| --- | --- | --- | --- | --- |
+| username | string | — | — | Username as X spells it. |
+| xUserId | string | — | — | Numeric X user ID to put in taggedUsers. |
+| displayName | string | — | — | Account name. |
+
+#### Example response
+
+```json
+{
+  "username": "x",
+  "xUserId": "x",
+  "displayName": "x"
+}
+```
+
 ### Mentions · Search
 
 **GET /mentions/search** — Search saved mention contacts; seeds your own connected accounts
@@ -2339,7 +2540,7 @@ curl -X GET "${API_PUBLIC_URL}/api/mentions/search" \
 | items[].platform | x \| threads \| instagram \| linkedin \| facebook | — | enum: x, threads, instagram, linkedin, facebook | Platform the contact belongs to. |
 | items[].displayName | string | — | — | Label shown in the composer. |
 | items[].handle | string \| null | — | — | X/Threads/Instagram username without @. |
-| items[].platformRef | string \| null | — | — | LinkedIn URN or numeric Facebook Page ID. |
+| items[].platformRef | string \| null | — | — | LinkedIn URN, numeric Facebook Page ID, or (X) the account's numeric user ID once it was resolved for tagging. |
 | items[].avatarUrl | string \| null | — | — | Optional avatar URL. |
 | items[].useCount | integer | — | min 0; max 9007199254740991 | Times this contact was used in a published post. |
 | items[].lastUsedAt | string (date-time) \| null | — | format date-time | When the contact was last used in a published post. |
@@ -2404,7 +2605,7 @@ curl -X PATCH "${API_PUBLIC_URL}/api/mentions/00000000-0000-4000-8000-0000000000
 | platform | x \| threads \| instagram \| linkedin \| facebook | — | enum: x, threads, instagram, linkedin, facebook | Platform the contact belongs to. |
 | displayName | string | — | — | Label shown in the composer. |
 | handle | string \| null | — | — | X/Threads/Instagram username without @. |
-| platformRef | string \| null | — | — | LinkedIn URN or numeric Facebook Page ID. |
+| platformRef | string \| null | — | — | LinkedIn URN, numeric Facebook Page ID, or (X) the account's numeric user ID once it was resolved for tagging. |
 | avatarUrl | string \| null | — | — | Optional avatar URL. |
 | useCount | integer | — | min 0; max 9007199254740991 | Times this contact was used in a published post. |
 | lastUsedAt | string (date-time) \| null | — | format date-time | When the contact was last used in a published post. |
@@ -2455,7 +2656,7 @@ curl -X GET "${API_PUBLIC_URL}/api/notifications" \
 | Field | Type | Default | Constraints | Description |
 | --- | --- | --- | --- | --- |
 | items[].id | string (uuid) | — | format uuid | Notification ID. |
-| items[].type | upload_succeeded \| upload_failed \| post_published \| post_failed \| post_scheduled \| schedule_failed \| schedule_missed \| post_deleted \| post_delete_failed \| post_edited \| post_edit_failed \| connection_removed | — | enum: upload_succeeded, upload_failed, post_published, post_failed, post_scheduled, schedule_failed, schedule_missed, post_deleted, post_delete_failed, post_edited, post_edit_failed, connection_removed | What happened. |
+| items[].type | upload_succeeded \| upload_failed \| post_published \| post_failed \| post_scheduled \| schedule_failed \| schedule_missed \| post_deleted \| post_delete_failed \| post_edited \| post_edit_failed \| connection_removed \| post_task \| post_warning | — | enum: upload_succeeded, upload_failed, post_published, post_failed, post_scheduled, schedule_failed, schedule_missed, post_deleted, post_delete_failed, post_edited, post_edit_failed, connection_removed, post_task, post_warning | What happened. |
 | items[].title | string | — | — | Short headline. |
 | items[].body | string | — | — | Longer message. |
 | items[].link | string \| null | — | — | In-app path the notification points to (web UI). |
@@ -2632,7 +2833,20 @@ curl -X GET "${API_PUBLIC_URL}/api/platforms/capabilities" \
 | [].supportsPhotos | boolean | — | — | Can publish photos. |
 | [].maxPhotos | integer | — | min -9007199254740991; max 9007199254740991 | Most photos per post. |
 | [].minCarousel | integer | — | min -9007199254740991; max 9007199254740991 | Fewest photos for a multi-photo post. |
+| [].carouselMode | api \| manual \| none | — | enum: api, manual, none | Multi-photo posts: api = Fannout publishes them; manual = the platform has no API for them, so the post is stored as a manual post (status draft) for the user to publish by hand; none = unsupported. |
+| [].carouselMax | integer | — | min -9007199254740991; max 9007199254740991 | Most photos in a multi-photo post. |
+| [].tagging.image | positioned \| list \| none | — | enum: positioned, list, none | Tags on photos: positioned = username + x/y (0–1), list = usernames only. |
+| [].tagging.video | list \| none | — | enum: list, none | Tags on videos: list = usernames only. |
+| [].tagging.max | integer | — | min -9007199254740991; max 9007199254740991 | Most tags per media item (Instagram) or per post (X). |
+| [].tagging.needsUserId | boolean | — | — | Tags are sent as user IDs: resolve usernames first (POST /mentions/x/resolve). |
+| [].collaborators | object \| null | — | — | Collaborator invites; null when the platform has none. |
 | [].supportsThumbnail | boolean | — | — | Accepts a custom video thumbnail (thumbnailByConnection). |
+| [].thumbnailRules.maxBytes | number | — | — | Largest thumbnail in bytes. |
+| [].thumbnailRules.mimeTypes | string[] | — | — | Accepted thumbnail MIME types. |
+| [].thumbnailRules.aspect | landscape \| portrait | — | enum: landscape, portrait | Shape the platform shows; the web composer assigns picked images by it. |
+| [].thumbnailRules.recommended | string | — | — | Recommended size, e.g. 1280×720 (16:9). |
+| [].thumbnailRules.note | string | — | — | Platform caveat (e.g. YouTube needs a verified channel). |
+| [].perImageAltTextMax | integer | — | min -9007199254740991; max 9007199254740991 | Photo posts accept input.altTexts (media ID → alt text) up to this many characters each; absent = no per-image alt text. |
 | [].supportsDelete | boolean | — | — | Fannout can delete published posts here. |
 | [].deleteNote | string | — | — | Platform note about deletes. |
 | [].supportsEdit | boolean | — | — | Published posts can be edited. |
@@ -2641,7 +2855,7 @@ curl -X GET "${API_PUBLIC_URL}/api/platforms/capabilities" \
 | [].fields[].name | string | — | — | Key to use in targets[].input. |
 | [].fields[].label | string | — | — | Human-readable field name. |
 | [].fields[].description | string | — | — | What the field does and its limits. |
-| [].fields[].kind | text \| textarea \| select \| toggle \| tags \| playlist \| radio | — | enum: text, textarea, select, toggle, tags, playlist, radio | Input kind: text/textarea = string, toggle/radio = boolean or option value, select = option value, tags = string[], playlist = playlist ID. |
+| [].fields[].kind | text \| textarea \| select \| toggle \| tags \| playlist \| radio \| relatedVideo | — | enum: text, textarea, select, toggle, tags, playlist, radio, relatedVideo | Input kind: text/textarea = string, toggle/radio = boolean or option value, select = option value, tags = string[], playlist = playlist ID, relatedVideo = { videoId, title, watchNext? } from the channel's uploads. |
 | [].fields[].required | boolean | — | — | Whether the field must be sent. |
 | [].fields[].maxLength | integer | — | min -9007199254740991; max 9007199254740991 | Length limit, counted per countMode. |
 | [].fields[].countMode | chars \| bytes \| weighted | — | enum: chars, bytes, weighted | How maxLength is counted: chars, UTF-8 bytes, or X-weighted (URLs count 23). |
@@ -2653,6 +2867,14 @@ curl -X GET "${API_PUBLIC_URL}/api/platforms/capabilities" \
 | [].fields[].mediaType | video \| photos | — | enum: video, photos | Field only applies to this media type. |
 | [].fields[].helper | string | — | — | Extra hint shown in the web composer. |
 | [].fields[].ai | boolean | — | — | POST /ai/generations can write this field. |
+| [].fields[].aiBands.video.min | integer | — | min -9007199254740991; max 9007199254740991 | Lower end of the length AI aims for. |
+| [].fields[].aiBands.video.max | integer | — | min -9007199254740991; max 9007199254740991 | Upper end of the length AI aims for. |
+| [].fields[].aiBands.short.min | integer | — | min -9007199254740991; max 9007199254740991 | Lower end of the length AI aims for. |
+| [].fields[].aiBands.short.max | integer | — | min -9007199254740991; max 9007199254740991 | Upper end of the length AI aims for. |
+| [].fields[].aiBands.image.min | integer | — | min -9007199254740991; max 9007199254740991 | Lower end of the length AI aims for. |
+| [].fields[].aiBands.image.max | integer | — | min -9007199254740991; max 9007199254740991 | Upper end of the length AI aims for. |
+| [].fields[].aiBands.carousel.min | integer | — | min -9007199254740991; max 9007199254740991 | Lower end of the length AI aims for. |
+| [].fields[].aiBands.carousel.max | integer | — | min -9007199254740991; max 9007199254740991 | Upper end of the length AI aims for. |
 | [].mediaRules.maxVideoBytes | number | — | — | Largest video in bytes. |
 | [].mediaRules.minVideoSeconds | number | — | — | Shortest video in seconds. |
 | [].mediaRules.maxVideoSeconds | number | — | — | Longest video in seconds. |
@@ -2684,6 +2906,17 @@ curl -X GET "${API_PUBLIC_URL}/api/platforms/capabilities" \
     "supportsPhotos": false,
     "maxPhotos": -9007199254740991,
     "minCarousel": -9007199254740991,
+    "carouselMode": "api",
+    "carouselMax": -9007199254740991,
+    "tagging": {
+      "image": "positioned",
+      "video": "list",
+      "max": -9007199254740991,
+      "needsUserId": false
+    },
+    "collaborators": {
+      "max": -9007199254740991
+    },
     "supportsThumbnail": false,
     "supportsDelete": false,
     "deleteNote": "x",
@@ -2799,6 +3032,99 @@ curl -X GET "${API_PUBLIC_URL}/api/platforms/youtube/00000000-0000-4000-8000-000
 ]
 ```
 
+### Platforms · Youtube Uploads
+
+**GET /platforms/youtube/{socialConnectionId}/uploads** — List a YouTube channel's uploaded videos, newest first
+
+- Required scope: `connections:read`
+- Rate limit: none beyond the API-key `api` bucket
+- Possible errors: `UNAUTHORIZED`, `FORBIDDEN`, `TOO_MANY_REQUESTS`, `VALIDATION`, `BAD_REQUEST`, `NOT_FOUND`, `CONFLICT`, `INTERNAL`
+
+#### Request
+
+| Field | Type | Required | Default | Constraints | Description |
+| --- | --- | --- | --- | --- | --- |
+| cursor | string \| null | optional | — | min length 1; max length 300 | Opaque cursor from the previous page's nextCursor; omit for the first page. |
+| limit | integer | required | 10 | min 1; max 10; default: 10 | Items per page (max 10). |
+| socialConnectionId | string (uuid) | required | — | format uuid | A connected YouTube account. |
+
+#### Example request
+
+```bash
+curl -X GET "${API_PUBLIC_URL}/api/platforms/youtube/00000000-0000-4000-8000-000000000000/uploads" \
+  -H "Authorization: Bearer $FANNOUT_API_KEY" \
+  -H 'Content-Type: application/json'
+```
+
+#### Response
+
+| Field | Type | Default | Constraints | Description |
+| --- | --- | --- | --- | --- |
+| items[].videoId | string | — | — | YouTube video ID. |
+| items[].title | string | — | — | Video title. |
+| items[].thumbnailUrl | string \| null | — | — | Thumbnail image URL. |
+| items[].publishedAt | string \| null | — | — | When the video was published (ISO 8601). |
+| nextCursor | string \| null | — | — | Pass as cursor to get the next page; null when there are no more items. |
+
+#### Example response
+
+```json
+{
+  "items": [
+    {
+      "videoId": "x",
+      "title": "x",
+      "thumbnailUrl": "x",
+      "publishedAt": "x"
+    }
+  ],
+  "nextCursor": "x"
+}
+```
+
+### Platforms · Youtube Video
+
+**GET /platforms/youtube/{socialConnectionId}/video** — Look up a YouTube video by its URL or ID
+
+- Required scope: `connections:read`
+- Rate limit: none beyond the API-key `api` bucket
+- Possible errors: `UNAUTHORIZED`, `FORBIDDEN`, `TOO_MANY_REQUESTS`, `VALIDATION`, `BAD_REQUEST`, `NOT_FOUND`, `CONFLICT`, `INTERNAL`
+
+#### Request
+
+| Field | Type | Required | Default | Constraints | Description |
+| --- | --- | --- | --- | --- | --- |
+| socialConnectionId | string (uuid) | required | — | format uuid | A connected YouTube account. |
+| url | string | required | — | min length 1; max length 300 | A YouTube video URL (watch, youtu.be, shorts) or a video ID. |
+
+#### Example request
+
+```bash
+curl -X GET "${API_PUBLIC_URL}/api/platforms/youtube/00000000-0000-4000-8000-000000000000/video" \
+  -H "Authorization: Bearer $FANNOUT_API_KEY" \
+  -H 'Content-Type: application/json'
+```
+
+#### Response
+
+| Field | Type | Default | Constraints | Description |
+| --- | --- | --- | --- | --- |
+| videoId | string | — | — | YouTube video ID. |
+| title | string | — | — | Video title. |
+| thumbnailUrl | string \| null | — | — | Thumbnail image URL. |
+| publishedAt | string \| null | — | — | When the video was published (ISO 8601). |
+
+#### Example response
+
+```json
+{
+  "videoId": "x",
+  "title": "x",
+  "thumbnailUrl": "x",
+  "publishedAt": "x"
+}
+```
+
 ### Posts · Batch
 
 **GET /posts/batches/{batchId}** — Get a batch and the status of each post
@@ -2856,6 +3182,9 @@ curl -X GET "${API_PUBLIC_URL}/api/posts/batches/00000000-0000-4000-8000-0000000
 | posts[].deleteErrorMessage | string \| null | — | — | Why the last delete failed. |
 | posts[].deletedAt | string (date-time) \| null | — | format date-time | When the post was deleted. |
 | posts[].schedule | object \| null | — | — | Schedule for scheduled posts; null when the post was published immediately. |
+| posts[].manual | object \| null | — | — | Set for manual posts (the platform has no API for this post type, e.g. YouTube image posts). They stay in status draft and are never sent to the platform. |
+| posts[].relatedVideo | object \| null | — | — | YouTube follow-up task: set this related video in YouTube Studio (the Data API can't). |
+| posts[].warning | string \| null | — | — | Non-fatal note about a published post, e.g. X tags that had to be dropped. |
 
 #### Example response
 
@@ -2903,7 +3232,17 @@ curl -X GET "${API_PUBLIC_URL}/api/posts/batches/00000000-0000-4000-8000-0000000
         "status": "scheduled",
         "scheduleVersion": 1,
         "lastError": "x"
-      }
+      },
+      "manual": {
+        "status": "pending"
+      },
+      "relatedVideo": {
+        "videoId": "x",
+        "title": "x",
+        "status": "pending",
+        "studioUrl": "x"
+      },
+      "warning": "x"
     }
   ]
 }
@@ -2923,7 +3262,7 @@ curl -X GET "${API_PUBLIC_URL}/api/posts/batches/00000000-0000-4000-8000-0000000
 | --- | --- | --- | --- | --- | --- |
 | cursor | string \| null | optional | — | min length 1; max length 300 | Opaque cursor from the previous page's nextCursor; omit for the first page. |
 | limit | integer | required | 10 | min 1; max 10; default: 10 | Items per page (max 10). |
-| filter | all \| scheduled | required | "all" | enum: all, scheduled; default: "all" | scheduled = only batches with a post still waiting for its scheduled time |
+| filter | all \| scheduled \| manual | required | "all" | enum: all, scheduled, manual; default: "all" | scheduled = only batches with a post still waiting for its scheduled time; manual = only batches with a manual post you still have to publish yourself |
 
 #### Example request
 
@@ -2968,6 +3307,9 @@ curl -X GET "${API_PUBLIC_URL}/api/posts/batches" \
 | items[].posts[].deleteErrorMessage | string \| null | — | — | Why the last delete failed. |
 | items[].posts[].deletedAt | string (date-time) \| null | — | format date-time | When the post was deleted. |
 | items[].posts[].schedule | object \| null | — | — | Schedule for scheduled posts; null when the post was published immediately. |
+| items[].posts[].manual | object \| null | — | — | Set for manual posts (the platform has no API for this post type, e.g. YouTube image posts). They stay in status draft and are never sent to the platform. |
+| items[].posts[].relatedVideo | object \| null | — | — | YouTube follow-up task: set this related video in YouTube Studio (the Data API can't). |
+| items[].posts[].warning | string \| null | — | — | Non-fatal note about a published post, e.g. X tags that had to be dropped. |
 | nextCursor | string \| null | — | — | Pass as cursor to get the next page; null when there are no more items. |
 
 #### Example response
@@ -3018,7 +3360,17 @@ curl -X GET "${API_PUBLIC_URL}/api/posts/batches" \
             "status": "scheduled",
             "scheduleVersion": 1,
             "lastError": "x"
-          }
+          },
+          "manual": {
+            "status": "pending"
+          },
+          "relatedVideo": {
+            "videoId": "x",
+            "title": "x",
+            "status": "pending",
+            "studioUrl": "x"
+          },
+          "warning": "x"
         }
       ]
     }
@@ -3067,6 +3419,45 @@ curl -X POST "${API_PUBLIC_URL}/api/posts/00000000-0000-4000-8000-000000000000/c
   "postId": "00000000-0000-4000-8000-000000000000",
   "cancelled": true,
   "alreadyCancelled": false
+}
+```
+
+### Posts · Complete Related Video
+
+**POST /posts/{postId}/tasks/related-video/done** — Mark the YouTube related-video task as done
+
+- Required scope: `posts:write`
+- Rate limit: none beyond the API-key `api` bucket
+- Possible errors: `UNAUTHORIZED`, `FORBIDDEN`, `TOO_MANY_REQUESTS`, `VALIDATION`, `BAD_REQUEST`, `NOT_FOUND`, `CONFLICT`, `INTERNAL`
+
+#### Request
+
+| Field | Type | Required | Default | Constraints | Description |
+| --- | --- | --- | --- | --- | --- |
+| postId | string (uuid) | required | — | format uuid | Post ID. |
+
+#### Example request
+
+```bash
+curl -X POST "${API_PUBLIC_URL}/api/posts/00000000-0000-4000-8000-000000000000/tasks/related-video/done" \
+  -H "Authorization: Bearer $FANNOUT_API_KEY" \
+  -H 'Content-Type: application/json' \
+  --data '{
+  "postId": "00000000-0000-4000-8000-000000000000"
+}'
+```
+
+#### Response
+
+| Field | Type | Default | Constraints | Description |
+| --- | --- | --- | --- | --- |
+| updated | boolean | — | — | False when there was nothing to change (already done). |
+
+#### Example response
+
+```json
+{
+  "updated": false
 }
 ```
 
@@ -3267,6 +3658,46 @@ curl -X GET "${API_PUBLIC_URL}/api/posts/00000000-0000-4000-8000-000000000000" \
     ],
     "editNote": "x"
   }
+}
+```
+
+### Posts · Mark Manual Posted
+
+**POST /posts/{postId}/manual-posted** — Mark a manual post as posted (optionally with its URL)
+
+- Required scope: `posts:write`
+- Rate limit: none beyond the API-key `api` bucket
+- Possible errors: `UNAUTHORIZED`, `FORBIDDEN`, `TOO_MANY_REQUESTS`, `VALIDATION`, `BAD_REQUEST`, `NOT_FOUND`, `CONFLICT`, `INTERNAL`
+
+#### Request
+
+| Field | Type | Required | Default | Constraints | Description |
+| --- | --- | --- | --- | --- | --- |
+| postId | string (uuid) | required | — | format uuid | A manual post (manual.status = pending). |
+| postUrl | string (uri) | optional | — | max length 500; format uri | Link to the post you published by hand; stored as the post URL. |
+
+#### Example request
+
+```bash
+curl -X POST "${API_PUBLIC_URL}/api/posts/00000000-0000-4000-8000-000000000000/manual-posted" \
+  -H "Authorization: Bearer $FANNOUT_API_KEY" \
+  -H 'Content-Type: application/json' \
+  --data '{
+  "postId": "00000000-0000-4000-8000-000000000000"
+}'
+```
+
+#### Response
+
+| Field | Type | Default | Constraints | Description |
+| --- | --- | --- | --- | --- |
+| updated | boolean | — | — | False when there was nothing to change (already done). |
+
+#### Example response
+
+```json
+{
+  "updated": false
 }
 ```
 

@@ -45,10 +45,12 @@ The tRPC/OpenAPI error envelope is `{ "error": { "message": string, "code": stri
 
 ### Upload media
 
-1. `POST /media/uploads` (`media:write`) to get `mediaId`, `partSize`, and presigned part URLs.
-2. PUT every byte range directly to its corresponding presigned URL; collect the response ETags.
+1. `POST /media/uploads` (`media:write`) to get `mediaId`, `partSize`, `partCount` and presigned URLs for the first parts (up to 100; `presignLimit` sets fewer). The media exists at once with status `uploading`. Send `fingerprint` to reuse an identical ready file: then `reused` is true and there is nothing to upload.
+2. PUT every byte range directly to its presigned URL; collect the response ETags. Get URLs for the remaining parts, or fresh ones after they expire (12 h), with `POST /media/{mediaId}/parts`.
 3. `POST /media/{mediaId}/complete` with the ETags.
-4. Poll `GET /media/{mediaId}` (`media:read`) until `status` is `ready` or `failed`. Do not publish failed media.
+4. Poll `GET /media/{mediaId}` (`media:read`) until `status` is `ready` or `failed`.
+
+You don't have to wait for `ready` before posting: `POST /posts` accepts media that is `uploading`, `uploaded` or `processing` (never `failed`). The publish job waits for the files (up to 24 h, or the scheduled time's late window) and fails the post if a file fails. A thumbnail that isn't ready in time is skipped.
 
 ### Organize media
 
@@ -57,6 +59,22 @@ Create a folder with `POST /folders`, then use `POST /folders/{folderId}/items` 
 ### Generate captions (optional)
 
 Call `POST /ai/generations`, then poll `GET /ai/generations/{generationId}` until `status` is `succeeded` or `failed`. Review generated content before publishing.
+
+- Sources, in priority order: `jsonMediaId` (the author's draft per platform: kept in angle and claims, expanded to the platform's length), `subtitleMediaId` (extra facts and the only source of YouTube chapter timestamps), `photoMediaIds` (photo posts: image/carousel copy and alt texts). At least one is required.
+- Each platform is written with its own playbook for the post type (`video`, `short`, `image`, `carousel`) and aims for the field's `aiBands` in the platform capabilities (always within `maxLength`, in the field's `countMode`). `targets[socialConnectionId]` in the result says which playbook and source were used.
+- `issues` are notes, not failures: "Shortened automatically…" (trimmed to the hard limit) or "Shorter than target…" (the source didn't have more material; text is never padded).
+- `targets[].hookOnly` with `current` rewrites only the title (YouTube) or the first line of the main text.
+- Generation only returns values. Nothing is published until you call `POST /posts/batches`.
+- `targets[].context` (tagged usernames, collaborators, the YouTube related video) is context only: AI may mention a tagged person once, and never adds tags or people you didn't choose.
+
+## Tags, collaborators, manual posts and follow-up tasks
+
+Read each platform's capabilities first: `carouselMode`, `carouselMax`, `tagging` and `collaborators` say what is possible.
+
+- **Instagram tags** go in `targets[].input.userTags` as `{ mediaIndex, username, x?, y? }` (`mediaIndex` 0 for a single photo or a Reel). Photos need `x` and `y` (0.0–1.0 from the left / top); Reels take `username` only. At most 20 per media item, public accounts only. `collaborators` (up to 3) works on photos, carousels and Reels; each one must accept the invite in Instagram. If Instagram rejects a tag the post fails with Instagram's message.
+- **X tags** go in `targets[].input.taggedUsers` as `{ username, xUserId }` (max 10 per post, images or a video). Get `xUserId` from `POST /mentions/x/resolve`; the id is saved, so each username is looked up (and billed by X) once. If X rejects the tags, the post is sent once more without them and you get a `post_warning` notification; the post's `warning` names who was dropped.
+- **Manual posts.** When a platform's `carouselMode` is `manual` (YouTube image posts: 2–10 photos), `POST /posts/batches` stores the post with status `draft` and `manual.status = pending` and never publishes it. Send only the manual fields (`communityText`). Download the images with `POST /media/zip`, publish by hand, then call `POST /posts/{postId}/manual-posted` (optional `postUrl`). `GET /posts/batches?filter=manual` lists what is still waiting.
+- **YouTube related video.** Put `relatedVideo: { videoId, title, watchNext? }` in the YouTube input (pick from `GET /platforms/youtube/{socialConnectionId}/uploads`, or resolve a link with `GET /platforms/youtube/{socialConnectionId}/video`). YouTube's API cannot set a related video, so after publishing the post carries a `relatedVideo` task with a `studioUrl`; close it with `POST /posts/{postId}/tasks/related-video/done`. For long-form videos `watchNext` (default true) adds a "Watch next" link above the hashtags; it is never added to Shorts.
 
 ### Validate and publish
 

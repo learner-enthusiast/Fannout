@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { composeField, type ComposeCapabilities } from "../common/compose";
+import { composeField, NO_TAGGING, type ComposeCapabilities } from "../common/compose";
 import { MediaSourceSchema } from "../common/media";
 import {
   LINKEDIN_ALT_TEXT_MAX,
@@ -866,6 +866,10 @@ export const LINKEDIN_COMPOSE: ComposeCapabilities = {
   supportsPhotos: true,
   maxPhotos: LINKEDIN_UGC_MAX_IMAGES,
   minCarousel: 1,
+  carouselMode: "api",
+  carouselMax: LINKEDIN_UGC_MAX_IMAGES,
+  tagging: NO_TAGGING,
+  collaborators: null,
   supportsThumbnail: false,
   mediaRules: { maxVideoBytes: LINKEDIN_VIDEO_MAX_BYTES, minVideoSeconds: 3, maxVideoSeconds: 30 * 60 },
   // DELETE /v2/ugcPosts/{urn} (idempotent; no update) — https://learn.microsoft.com/en-us/linkedin/compliance/integrations/shares/ugc-post-api
@@ -887,6 +891,10 @@ export const LINKEDIN_COMMUNITY_COMPOSE: ComposeCapabilities = {
   supportsPhotos: true,
   maxPhotos: LINKEDIN_MULTI_IMAGE.max,
   minCarousel: 1,
+  carouselMode: "api",
+  carouselMax: LINKEDIN_MULTI_IMAGE.max,
+  tagging: NO_TAGGING,
+  collaborators: null,
   supportsThumbnail: true,
   mediaRules: { maxVideoBytes: LINKEDIN_VIDEO_MAX_BYTES, minVideoSeconds: 3, maxVideoSeconds: 30 * 60 },
   supportsDelete: true,

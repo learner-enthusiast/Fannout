@@ -65,3 +65,6 @@ export const X_VIDEO_MAX_SECONDS = 125 * 60;
 export const X_MEDIA_TTL_SECONDS = 86_400;
 /** Request timeout for /2/media/upload calls (one segment per request). */
 export const X_MEDIA_REQUEST_TIMEOUT_MS = 120_000;
+
+/** People tagged on a post's media (media.tagged_user_ids); all images together count once. */
+export const X_TAG_MAX = 10;

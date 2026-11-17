@@ -133,7 +133,7 @@ export class InstagramProvider extends BaseProvider<InstagramProviderConfig> {
   /** POST /{ig-id}/media — carousel parent (children must already be FINISHED). */
   async createCarouselContainer(input: CreateCarouselContainerInput): Promise<GraphId> {
     const v = this.validate(CreateCarouselContainerInputSchema, input, "createCarouselContainer");
-    return this.post(E.createContainer(this.igUserId), { media_type: "CAROUSEL", children: v.children, caption: v.caption }, GraphIdSchema);
+    return this.post(E.createContainer(this.igUserId), { media_type: "CAROUSEL", children: v.children, caption: v.caption, collaborators: v.collaborators }, GraphIdSchema);
   }
 
   /** GET /{container-id}?fields=status_code. */

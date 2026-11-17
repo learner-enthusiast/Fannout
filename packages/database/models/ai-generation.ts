@@ -2,7 +2,8 @@ import { index, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-cor
 import { users } from "./user";
 
 /**
- * One AI copy-generation request from Compose. Source text is never stored —
+ * One AI copy-generation request from Compose, or (scope.kind = "brief") the
+ * cached brief a set of sources was distilled into. Source text is never stored —
  * only the source media ids, the request (`input`), the result and usage.
  */
 export const aiGenerations = pgTable(
@@ -14,7 +15,7 @@ export const aiGenerations = pgTable(
       .references(() => users.id, { onDelete: "cascade" }),
     /** queued | running | succeeded | failed */
     status: text("status").notNull().default("queued"),
-    /** [{ connectionId, field }] or "all". */
+    /** [{ connectionId, field }] or "all"; briefs: { kind: "brief", hash }. */
     scope: jsonb("scope").$type<unknown>().notNull(),
     sourceMediaIds: jsonb("source_media_ids").$type<string[]>().notNull().default([]),
     input: jsonb("input").$type<Record<string, unknown>>().notNull().default({}),

@@ -39,6 +39,8 @@ export const MediaMetadataSchema = z.looseObject({
   jsonSchema: JsonSchemaKindSchema.nullable().optional(),
   subtitle: SubtitleSummarySchema.nullable().optional(),
   folderSuggestion: FolderSuggestionSchema.optional(),
+  /** Quick upload fingerprint (size + lastModified + SHA-256 of the first 1 MB) used to reuse identical uploads. */
+  fingerprint: z.string().optional(),
   /** Object key of the small JPEG thumbnail (images and videos). */
   thumbnailKey: z.string().optional(),
   /** social_package JSON: the parts needed to recompute the suggestion later. */
@@ -114,7 +116,26 @@ export type ListMediaInput = z.input<typeof ListMediaInputSchema>;
 // ---------------------------------------------------------------------------
 
 export const MEDIA_PART_SIZE = 10 * 1024 * 1024;
-export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024 * 1024;
+/** Hard storage cap: S3 allows 10,000 parts, so 10 MiB parts top out just under 100 GiB. The real per-upload limit is the largest platform limit (uploads.ts). */
+export const MAX_UPLOAD_BYTES = MEDIA_PART_SIZE * 10_000;
+/** Uploads a user may have in "uploading" at once (picked but not finished). */
+export const MAX_CONCURRENT_UPLOADS = 30;
+/** Part URLs returned by createUpload when presignLimit is omitted (the rest come from POST /media/{mediaId}/parts). */
+export const MAX_PRESIGN_BATCH = 100;
+
+/** Compose slot an upload is for; the server checks the file type against it. */
+export const UploadSlotSchema = z.enum(["video", "photos", "thumbnail", "subtitles", "json"]);
+export type UploadSlot = z.infer<typeof UploadSlotSchema>;
+export const SLOT_TYPES: Record<UploadSlot, MediaType> = {
+  video: "video",
+  photos: "image",
+  thumbnail: "image",
+  subtitles: "subtitle",
+  json: "json",
+};
+
+/** "<size>-<lastModified>-<sha256 hex of the first 1 MB>". */
+export const FingerprintSchema = z.string().trim().regex(/^\d+-\d+-[0-9a-f]{64}$/, "Invalid fingerprint");
 /** Subtitles and JSON are parsed in memory, so they stay small. */
 export const MAX_TEXT_UPLOAD_BYTES = 1024 * 1024;
 
@@ -159,14 +180,20 @@ export function orientationOf(width: number | null, height: number | null): Orie
 export const CreateUploadInputSchema = z.object({
   filename: z.string().trim().min(1).max(255).describe("Original filename including extension (.mp4, .jpg, .srt, .vtt, .json …)."),
   mimeType: z.string().trim().max(255).describe("MIME type of the file (video/*, image/*, application/json); may be empty for .srt/.vtt."),
-  sizeBytes: z.number().int().positive().max(MAX_UPLOAD_BYTES).describe("Exact file size in bytes. Videos/images up to 5 GiB; subtitles and JSON up to 1 MiB."),
+  sizeBytes: z.number().int().positive().max(MAX_UPLOAD_BYTES).describe("Exact file size in bytes. Videos/images up to the largest platform video limit (see GET /platforms/capabilities, capped by storage); subtitles and JSON up to 1 MiB."),
   /** Display name; defaults to the filename without its extension. */
   name: MediaNameSchema.optional().describe("Display name (1–200 chars); defaults to the filename without its extension."),
+  slot: UploadSlotSchema.optional().describe("Compose slot the file is for (video, photos, thumbnail, subtitles, json); the file type must match it."),
+  fingerprint: FingerprintSchema.optional().describe("Quick fingerprint \"<size>-<lastModified ms>-<sha256 hex of the first 1 MB>\". When a ready media with the same fingerprint exists, it is returned with reused=true and nothing is uploaded."),
+  presignLimit: z.number().int().min(0).max(MAX_PRESIGN_BATCH).optional().describe(`How many part URLs to presign now (default: all parts, at most ${MAX_PRESIGN_BATCH}). Get the rest with POST /media/{mediaId}/parts.`),
 });
 export type CreateUploadInput = z.infer<typeof CreateUploadInputSchema>;
 
 export const CreateUploadResultSchema = z.object({
-  mediaId: z.uuid().describe("ID of the new media item (status uploading)."),
+  mediaId: z.uuid().describe("ID of the new media item (status uploading), or of the existing ready media when reused."),
+  reused: z.boolean().describe("True when an identical ready file (same fingerprint) was found: nothing to upload, parts is empty."),
+  uploadId: z.string().nullable().describe("S3 multipart upload ID; null when reused."),
+  partCount: z.number().int().nonnegative().describe("Total number of parts to upload (0 when reused)."),
   partSize: z.number().int().positive().describe("Bytes per part; part N covers bytes [(N-1)*partSize, N*partSize)."),
   parts: z.array(z.object({
     partNumber: z.number().int().positive().describe("1-based part number."),
@@ -174,6 +201,22 @@ export const CreateUploadResultSchema = z.object({
   })).describe("One presigned upload URL per part."),
 });
 export type CreateUploadResult = z.infer<typeof CreateUploadResultSchema>;
+
+export const SignUploadPartsInputSchema = z.object({
+  mediaId: z.uuid().describe("Media ID of an upload in progress."),
+  partNumbers: z.array(z.number().int().min(1).max(10_000)).min(1).max(MAX_PRESIGN_BATCH).describe(`Parts to (re)sign, at most ${MAX_PRESIGN_BATCH} per call (expired URLs, the rest of a large file, or resuming after a reload).`),
+});
+export type SignUploadPartsInput = z.infer<typeof SignUploadPartsInputSchema>;
+
+export const SignUploadPartsResultSchema = z.object({
+  mediaId: z.uuid().describe("Media ID."),
+  partSize: z.number().int().positive().describe("Bytes per part."),
+  parts: z.array(z.object({
+    partNumber: z.number().int().positive().describe("1-based part number."),
+    url: z.url().describe("Presigned PUT URL for this part (valid 12 h)."),
+  })).describe("Fresh presigned URLs for the requested parts."),
+});
+export type SignUploadPartsResult = z.infer<typeof SignUploadPartsResultSchema>;
 
 export const CompleteUploadInputSchema = z.object({
   mediaId: z.uuid().describe("Media ID returned by POST /media/uploads."),

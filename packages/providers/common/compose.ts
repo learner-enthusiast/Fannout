@@ -9,7 +9,7 @@ import { z } from "zod";
  * UI metadata via Zod `.meta()`, so the composer UI and the server validation
  * come from the same definition.
  */
-export const ComposeFieldKindSchema = z.enum(["text", "textarea", "select", "toggle", "tags", "playlist", "radio"]);
+export const ComposeFieldKindSchema = z.enum(["text", "textarea", "select", "toggle", "tags", "playlist", "radio", "relatedVideo"]);
 export type ComposeFieldKind = z.infer<typeof ComposeFieldKindSchema>;
 
 export const ComposeCountModeSchema = z.enum(["chars", "bytes", "weighted"]);
@@ -64,6 +64,30 @@ export type ComposeMediaRules = {
   billed?: boolean;
 };
 
+/** What a custom video thumbnail / cover image must look like on a platform. */
+export type ComposeThumbnailRules = {
+  maxBytes: number;
+  mimeTypes: string[];
+  /** Shape the platform shows; the composer auto-assigns picked images by it. */
+  aspect: "landscape" | "portrait";
+  /** Recommended size, for display (e.g. "1280×720 (16:9)"). */
+  recommended: string;
+  note?: string;
+};
+
+/** How people are tagged on media (separate from @mentions in the text). */
+export type ComposeTagging = {
+  /** positioned = { username, x, y } pins on the image; list = usernames only. */
+  image: "positioned" | "list" | "none";
+  video: "list" | "none";
+  /** Most tags per media item (Instagram) or per post (X). */
+  max: number;
+  /** The platform tags by user id, so usernames are resolved (and saved) first. */
+  needsUserId: boolean;
+};
+
+export const NO_TAGGING: ComposeTagging = { image: "none", video: "none", max: 0, needsUserId: false };
+
 export type ComposeCapabilities = {
   mentions: {
     supported: boolean;
@@ -75,7 +99,21 @@ export type ComposeCapabilities = {
   maxPhotos: number;
   /** Fewest photos per post when photos are supported. */
   minCarousel: number;
+  /**
+   * Multi-photo posts: api = Fannout publishes them; manual = the platform has no API for
+   * them, so Fannout prepares the text + images and the user posts by hand; none = unsupported.
+   */
+  carouselMode: "api" | "manual" | "none";
+  /** Most photos in a multi-photo post (0 when carouselMode is none). */
+  carouselMax: number;
+  tagging: ComposeTagging;
+  /** Collaborator invites (accounts that must accept in the platform's app); null = unsupported. */
+  collaborators: { max: number } | null;
   supportsThumbnail: boolean;
+  /** Constraints for the custom thumbnail (only when supportsThumbnail). */
+  thumbnailRules?: ComposeThumbnailRules;
+  /** Photo posts: max length of an alt text per image (`altTexts`); absent = no per-image alt text. */
+  perImageAltTextMax?: number;
   mediaRules: ComposeMediaRules;
   /** The platform API can delete a published post. */
   supportsDelete: boolean;

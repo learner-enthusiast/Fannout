@@ -347,6 +347,15 @@ export async function completeSchedule(postId: string, scheduleVersion: number, 
   await invalidatePostOwner(UuidSchema.parse(postId));
 }
 
+/** The post's files weren't ready within the late window: missed (the user can "Publish now" once they are). */
+export async function markScheduleMissed(postId: string, message: string, now = new Date()): Promise<void> {
+  await db
+    .update(scheduledPosts)
+    .set({ status: "missed", missedAt: now, lastError: message.slice(0, 500), lockedAt: null, updatedAt: now })
+    .where(and(eq(scheduledPosts.postId, UuidSchema.parse(postId)), inArray(scheduledPosts.status, OPEN)));
+  await invalidatePostOwner(UuidSchema.parse(postId));
+}
+
 /** Publishing failed for good: record it on the schedule too (no-op for unscheduled posts). */
 export async function failSchedule(postId: string, message: string, now = new Date()): Promise<void> {
   await db
