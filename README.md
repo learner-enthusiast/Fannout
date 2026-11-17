@@ -4,27 +4,27 @@ Write once, publish to every channel.
 
 Turborepo (pnpm) monorepo:
 
-| Path | What |
-| --- | --- |
-| `apps/web` | Next.js App Router web app: Tailwind v4, shadcn/ui (Base UI), Clerk |
-| `apps/api` | Express + tRPC API (OpenAPI at `/docs`) |
-| `packages/*` | Shared database, services, tRPC router, logger, errors and configs |
+| Path         | What                                                                |
+| ------------ | ------------------------------------------------------------------- |
+| `apps/web`   | Next.js App Router web app: Tailwind v4, shadcn/ui (Base UI), Clerk |
+| `apps/api`   | Express + tRPC API (OpenAPI at `/docs`)                             |
+| `packages/*` | Shared database, services, tRPC router, logger, errors and configs  |
 
 ## Getting started
 
 ```sh
 cp .env.example .env   # fill in Clerk + database values
 pnpm install
-pnpm dev
+pnpm dev.
 ```
 
-| Command | Does |
-| --- | --- |
-| `pnpm dev` | Run all apps |
-| `pnpm build` | Build all apps |
-| `pnpm lint` | ESLint plus the web design-rule lint |
-| `pnpm check-types` | TypeScript |
-| `pnpm test` | Unit tests |
+| Command            | Does                                 |
+| ------------------ | ------------------------------------ |
+| `pnpm dev`         | Run all apps                         |
+| `pnpm build`       | Build all apps                       |
+| `pnpm lint`        | ESLint plus the web design-rule lint |
+| `pnpm check-types` | TypeScript                           |
+| `pnpm test`        | Unit tests                           |
 
 ## UI
 
