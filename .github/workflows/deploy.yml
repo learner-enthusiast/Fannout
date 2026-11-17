@@ -78,8 +78,6 @@ jobs:
           git fetch origin main && git checkout -B main origin/main && git reset --hard origin/main
           pnpm install --frozen-lockfile
           pnpm run db:migrate:deploy
-          # `next build` writes apps/web/.next; if the app ever ran as root, that tree is root-owned → EACCES.
-          rm -rf apps/web/.next
           pnpm run build
           sudo -n systemctl restart fannout
           sudo -n systemctl is-active fannout
