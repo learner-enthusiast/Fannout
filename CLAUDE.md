@@ -9,6 +9,7 @@ Product name: **Fannout** (double n).
   AI copy (playbook + length-targets entry + PROMPT_VERSION per platform/post type),
   capabilities as the single source for carousel mode / tagging, manual steps that never block publishing.
   Uploads: one picker for every slot, media row from init, posts before media is ready (publish waits on `media/ready`), never disable Post for uploads.
+  Original form factor: never crop/pad/resize to fit a platform; only format conversion (proportional downscale as a last resort for byte limits) via `ensureFormat`. Originals are never changed.
 - [docs/conventions/frontend.md](docs/conventions/frontend.md) — `useInfiniteList` +
   `<InfiniteList>`, optimistic mutations, ConfirmDialog + kebab menus for destructive actions.
 - UI work also follows [apps/web/DESIGN.md](apps/web/DESIGN.md).

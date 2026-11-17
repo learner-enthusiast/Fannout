@@ -61,6 +61,20 @@ const size = (bytes: number) => (bytes >= 1024 * MB ? `${Math.round(bytes / (102
 
 const mimeLabel = (mime: string) => (mime === "image/jpeg" ? "JPEG" : mime === "image/png" ? "PNG" : mime === "video/mp4" ? "MP4" : mime === "video/quicktime" ? "MOV" : mime);
 
+/** 0.8 → "4:5", 1.91 → "1.91:1". */
+function ratioLabel(value: number): string {
+  for (let h = 1; h <= 20; h++) {
+    const w = value * h;
+    if (Math.abs(w - Math.round(w)) < 1e-6) return `${Math.round(w)}:${h}`;
+  }
+  return `${value}:1`;
+}
+
+/** Shape outside the platform's range. Same text as the publish-time error (e.g. Instagram 2207009). */
+export function aspectMessage(label: string, range: { min: number; max: number }): string {
+  return `${label} only accepts images between ${ratioLabel(range.min)} and ${ratioLabel(range.max)}. Fannout won't crop your image: pick another image or remove ${label}`;
+}
+
 /**
  * Media rules for one platform. Media may still be uploading/processing:
  * posts can be created before their files are ready (publish-post waits for
@@ -106,9 +120,11 @@ export function mediaIssues(
       else if (!thumbnail || thumbnail.type !== "image") issues.push({ field: "thumbnail", message: "The thumbnail must be one of your images" });
       else if (thumbnail.status === "failed") issues.push({ field: "thumbnail", message: "The thumbnail failed to upload. Pick it again" });
       else {
-        // The platform's thumbnail rules win; without them the photo rules apply.
-        const mimeTypes = cap.thumbnailRules?.mimeTypes ?? rules.imageMimeTypes;
-        const maxBytes = cap.thumbnailRules?.maxBytes ?? rules.maxImageBytes;
+        // A cover slot rule means Fannout converts it (format and bytes): no format/size error. Any shape is allowed.
+        // Otherwise the platform's thumbnail rules win; without them the photo rules apply.
+        const converted = Boolean(cap.imageFormats?.cover);
+        const mimeTypes = converted ? undefined : (cap.thumbnailRules?.mimeTypes ?? rules.imageMimeTypes);
+        const maxBytes = converted ? undefined : (cap.thumbnailRules?.maxBytes ?? rules.maxImageBytes);
         if (mimeTypes && !mimeTypes.includes(thumbnail.mimeType)) {
           issues.push({ field: "thumbnail", message: `${label} thumbnails must be ${mimeTypes.map(mimeLabel).join(" or ")} (${thumbnail.name} isn't)` });
         }
@@ -136,6 +152,16 @@ export function mediaIssues(
   }
   if (media.length < Math.max(1, cap.minCarousel)) {
     issues.push({ field: "media", message: `${label} needs at least ${Math.max(1, cap.minCarousel)} photo${cap.minCarousel > 1 ? "s" : ""}` });
+  }
+  // A slot rule (capabilities.imageFormats) means Fannout converts the format and fits the byte limit
+  // itself (ensureFormat), so only shape is checked: images are never cropped, padded or stretched.
+  const slotRule = cap.imageFormats?.[media.length > 1 ? "carouselImage" : "image"];
+  if (slotRule) {
+    const range = slotRule.aspectRatio;
+    if (range && media.some((m) => m.width && m.height && (m.width / m.height < range.min || m.width / m.height > range.max))) {
+      issues.push({ field: "media", message: aspectMessage(label, range) });
+    }
+    return issues;
   }
   if (rules.imageMimeTypes && media.some((m) => !rules.imageMimeTypes!.includes(m.mimeType))) {
     issues.push({ field: "media", message: `${label} accepts ${rules.imageMimeTypes.map(mimeLabel).join(" or ")} images only` });

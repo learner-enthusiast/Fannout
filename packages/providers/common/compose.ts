@@ -64,6 +64,34 @@ export type ComposeMediaRules = {
   billed?: boolean;
 };
 
+/** Image file formats, by name (image/jpeg → "jpeg"). */
+export const IMAGE_FORMATS = ["jpeg", "png", "webp", "gif", "heic", "avif", "bmp", "tiff"] as const;
+export type ImageFormat = (typeof IMAGE_FORMATS)[number];
+
+/** Where an image goes in a post: a single photo, a carousel child, or a video cover/thumbnail. */
+export const IMAGE_SLOTS = ["image", "carouselImage", "cover"] as const;
+export type ImageSlot = (typeof IMAGE_SLOTS)[number];
+
+/**
+ * What a platform's API takes for one image slot. Images in another format (or over the byte limit)
+ * are converted by the publish layer (ensureFormat), keeping their exact form factor.
+ */
+export type ComposeImageSlotRule = {
+  acceptedImageFormats: ImageFormat[];
+  maxImageBytes: number;
+  /** Width / height range the platform accepts. Fannout never reshapes: outside it is a validation error. */
+  aspectRatio?: { min: number; max: number };
+};
+
+/** image/jpeg → "jpeg"; null for anything that isn't a known image format. */
+export function imageFormatOf(mimeType: string): ImageFormat | null {
+  const sub = mimeType.toLowerCase().replace(/^image\//, "");
+  if (sub === "jpeg" || sub === "jpg" || sub === "pjpeg") return "jpeg";
+  if (sub === "heif" || sub === "heic" || sub === "heic-sequence" || sub === "heif-sequence") return "heic";
+  if (sub === "x-ms-bmp") return "bmp";
+  return (IMAGE_FORMATS as readonly string[]).includes(sub) ? (sub as ImageFormat) : null;
+}
+
 /** What a custom video thumbnail / cover image must look like on a platform. */
 export type ComposeThumbnailRules = {
   maxBytes: number;
@@ -112,6 +140,8 @@ export type ComposeCapabilities = {
   supportsThumbnail: boolean;
   /** Constraints for the custom thumbnail (only when supportsThumbnail). */
   thumbnailRules?: ComposeThumbnailRules;
+  /** Image formats and byte limits per slot; absent slot = the platform documents none (sent as is). */
+  imageFormats?: Partial<Record<ImageSlot, ComposeImageSlotRule>>;
   /** Photo posts: max length of an alt text per image (`altTexts`); absent = no per-image alt text. */
   perImageAltTextMax?: number;
   mediaRules: ComposeMediaRules;

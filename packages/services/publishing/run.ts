@@ -21,10 +21,11 @@ import { joinComposeInput, PostConfigSchema, TERMINAL_STATUSES, YouTubeUploadSch
 import { PLATFORMS } from "./platforms";
 import { failSchedule, markScheduleMissed } from "../scheduling";
 import { mediaIssues } from "./validate";
-import { recordMentionsUsed, saveTagContacts } from "../mentions";
+import { applyImageFormats } from "./formats";
+import { recordInstagramContacts, recordMentionsUsed, saveTagContacts } from "../mentions";
 import { FacebookPublishError, MISSING_VIDEO_PERMISSION_MESSAGE, facebookPublisher } from "./publishers/facebook";
 import { LINKEDIN_MISSING_SHARE_MESSAGE, LinkedInPublishError, linkedinPublisher } from "./publishers/linkedin";
-import { INSTAGRAM_NEW_CONTAINER_SUBCODES, instagramPublisher, instagramSubcode } from "./publishers/instagram";
+import { INSTAGRAM_NEW_CONTAINER_SUBCODES, INSTAGRAM_VALIDATION, instagramPublisher, instagramSubcode } from "./publishers/instagram";
 import { threadsPublisher } from "./publishers/threads";
 import type { PublishContext, PublishOutcome, Publisher } from "./publishers/types";
 import type { PrepareStep } from "./upload/progress";
@@ -72,17 +73,6 @@ function classifyXError(error: ProviderError): { kind: ErrorKind; code: string; 
 }
 
 const INSTAGRAM_TRANSIENT = new Set(["2207001", "2207003", "2207027", "2207032", "2207053"]);
-const INSTAGRAM_VALIDATION: Record<string, string> = {
-  "2207004": "The image is too large for Instagram (max 8 MB).",
-  "2207005": "Instagram accepts JPEG images only.",
-  "2207009": "Instagram doesn't support this aspect ratio. Try a different crop.",
-  "2207010": "The caption is too long for Instagram (max 2,200 characters).",
-  "2207026": "Instagram doesn't support this video format. Use MP4 with H.264 video and AAC audio.",
-  "2207028": "A carousel needs 2 to 20 photos.",
-  "2207040": "This post has too many tags or mentions for Instagram.",
-  "2207052": "Instagram couldn't download the media from its link. Check that storage is reachable from the internet, then retry.",
-  "2207057": "The cover frame (ms) is outside the video. Pick an earlier time or a cover image.",
-};
 
 /** Instagram (Graph API) error codes and subcodes → existing classes. Anything else falls through to the generic rules. */
 function classifyInstagramError(error: ProviderError): { kind: ErrorKind; code: string; message: string } | null {
@@ -129,6 +119,14 @@ export function classifyPublishError(error: unknown): { kind: ErrorKind; code: s
     if (x) return x;
     const instagram = classifyInstagramError(error);
     if (instagram) return instagram;
+    // YouTube snippet.tags over its real budget (multi-word tags count +2 for quotes) or with < > ,.
+    if (error.provider === "YOUTUBE" && /invalidTags|invalid video keywords/i.test(providerBody(error))) {
+      return {
+        kind: "permanent",
+        code: "youtube_invalid_tags",
+        message: "YouTube rejected the tags: at most 500 characters in total (a tag with spaces counts 2 more), no <, > or commas. Shorten the tags and retry.",
+      };
+    }
     // "(#100) No permission to publish the video" (also #200 publish_video): permission, not a glitch.
     if (error.provider === "FACEBOOK" && /permission to publish the video|publish_video/i.test(error.message)) {
       return { kind: "permanent", code: "missing_video_permission", message: MISSING_VIDEO_PERMISSION_MESSAGE };
@@ -354,6 +352,11 @@ export async function runPublishPhase(postId: string, phase: PublishPhase, optio
     const publisher = publisherFor(provider);
     if (!publisher) throw new PermanentPublishError("UNSUPPORTED", "This platform can't be published to yet");
 
+    // Images in a format (or size) the platform doesn't take: one conversion per prepare step, before
+    // the publisher creates anything; then the publisher gets rows pointing at the converted copies.
+    const converting = await applyImageFormats(config.platform, ctx, phase);
+    if (converting) return converting;
+
     if (phase === "prepare") {
       // One unit of work per call (a chunk group or a poll); void = nothing more to prepare.
       const step = (await publisher.run("prepare", ctx)) as PrepareStep | void;
@@ -376,14 +379,18 @@ export async function runPublishPhase(postId: string, phase: PublishPhase, optio
     await invalidate(post.userId, "posts");
     await saveConfigProgress(post.id, {}, "Published");
     // Mention counters are ancillary; never turn an already-live post into a failure.
-    await recordMentionsUsed(post.userId, config.platform, input).catch(() => undefined);
-    // Same for the people tagged on the media: remember new usernames for the tag popover.
-    const dropped = (ctx.progress.tagsDropped as string[] | undefined) ?? [];
-    const tagged = [
-      ...(config.instagram?.tags ?? []).map((tag) => tag.username),
-      ...(config.x?.taggedUsers ?? []).map((tag) => tag.username).filter((username) => !dropped.includes(username)),
-    ];
-    await saveTagContacts(post.userId, config.platform, tagged).catch(() => undefined);
+    if (config.platform === "instagram") {
+      // Tags, collaborators and caption @mentions all become contacts (+1 use) for the suggestion popover.
+      await recordInstagramContacts(post.userId, { tags: config.instagram?.tags ?? [], collaborators: input.collaborators ?? [], caption: input.caption ?? "" }).catch(
+        () => undefined,
+      );
+    } else {
+      await recordMentionsUsed(post.userId, config.platform, input).catch(() => undefined);
+      // Same for the people tagged on the media: remember new usernames for the tag popover.
+      const dropped = (ctx.progress.tagsDropped as string[] | undefined) ?? [];
+      const tagged = (config.x?.taggedUsers ?? []).map((tag) => tag.username).filter((username) => !dropped.includes(username));
+      await saveTagContacts(post.userId, config.platform, tagged).catch(() => undefined);
+    }
     return outcome;
   } catch (error) {
     if (error instanceof PermanentPublishError) {

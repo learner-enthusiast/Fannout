@@ -29,8 +29,21 @@ export const FolderSuggestionSchema = z.object({
 });
 export type FolderSuggestion = z.infer<typeof FolderSuggestionSchema>;
 
+/** A format-converted copy of an original image (ensureFormat). The original is never changed. */
+export const MediaDerivativeSchema = z.object({
+  key: z.string().min(1).describe("Object key of the converted file (same bucket as the original)."),
+  width: z.number().int().positive().describe("Pixel width; equals the original unless scaled."),
+  height: z.number().int().positive().describe("Pixel height; equals the original unless scaled."),
+  bytes: z.number().int().positive().describe("File size in bytes."),
+  scaled: z.boolean().describe("True when it was scaled down proportionally to fit a byte limit."),
+  sourceChecksum: z.string().min(1).describe("Checksum (ETag) of the original it was built from; a mismatch means rebuild."),
+});
+export type MediaDerivative = z.infer<typeof MediaDerivativeSchema>;
+
 /** Shape of media.metadata (jsonb). Unknown keys are kept. */
 export const MediaMetadataSchema = z.looseObject({
+  /** Converted copies by target format (e.g. "jpeg"), built on demand for platforms that need them. */
+  derivatives: z.record(z.string(), MediaDerivativeSchema).optional(),
   multipart: z.object({ uploadId: z.string().min(1), partSize: z.number().int().positive() }).optional(),
   error: z.string().optional(),
   codec: z.object({ video: z.string().optional(), audio: z.string().optional() }).optional(),

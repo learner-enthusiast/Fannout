@@ -17,7 +17,8 @@
     "docs:agent": "pnpm --filter @repo/api exec dotenv -e ../../.env -- tsx ../../scripts/generate-agent-docs.ts",
     "docs:agent:check": "pnpm --filter @repo/api exec dotenv -e ../../.env -- tsx ../../scripts/generate-agent-docs.ts --check",
     "youtube:stuck": "pnpm --filter @repo/api exec dotenv -e ../../.env -- tsx ../../scripts/youtube-stuck-uploads.ts",
-    "x:debug": "pnpm --filter @repo/api exec dotenv -e ../../.env -- tsx ../../scripts/x-debug.ts"
+    "x:debug": "pnpm --filter @repo/api exec dotenv -e ../../.env -- tsx ../../scripts/x-debug.ts",
+    "mentions:backfill-instagram": "pnpm --filter @repo/api exec dotenv -e ../../.env -- tsx ../../scripts/backfill-instagram-contacts.ts"
   },
   "devDependencies": {
     "prettier": "^3.7.4",

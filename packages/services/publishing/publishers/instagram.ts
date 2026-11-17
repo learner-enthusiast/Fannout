@@ -6,6 +6,7 @@ import {
   INSTAGRAM_CONTAINER_POLL,
   INSTAGRAM_IMAGE,
   INSTAGRAM_REEL,
+  INSTAGRAM_REEL_CODECS,
   instagramPostType,
   type InstagramComposeInput,
   type InstagramPostType,
@@ -16,7 +17,9 @@ import { urlSource } from "./media-source";
 import type { PublishContext, Publisher } from "./types";
 
 const MB = 1024 * 1024;
-export const INSTAGRAM_JPEG_ONLY_MESSAGE = "Instagram accepts JPEG images only";
+/** Shape errors (validation and Graph API 2207009 / 2207005). Fannout never crops to fit. */
+export const INSTAGRAM_ASPECT_MESSAGE =
+  "Instagram only accepts images between 4:5 and 1.91:1. Fannout won't crop your image: pick another image or remove Instagram";
 
 /** Meta subcodes that mean "this container can't be published; build a fresh one". */
 export const INSTAGRAM_NEW_CONTAINER_SUBCODES = new Set(["2207020", "2207006", "2207008"]);
@@ -43,19 +46,33 @@ type Progress = {
 const fail = (message: string) => new PermanentPublishError("VALIDATION", message);
 const mb = (bytes: number) => `${Math.round(bytes / MB)} MB`;
 
-/** Checks everything we can before the first API call (class "validation"). */
+/**
+ * Checks everything we can before the first API call (class "validation"). Runs after the publish
+ * layer's format step (formats.ts), so photos and the cover are already JPEG ≤ 8 MB copies.
+ */
 export function assertInstagramPublishable(ctx: Pick<PublishContext, "media" | "mediaType" | "thumbnail">, type: InstagramPostType) {
   if (type === "reel") {
     const video = ctx.media[0];
     if (!video) throw fail("Pick a video");
     if (!(INSTAGRAM_REEL.mimeTypes as readonly string[]).includes(video.mimeType)) throw fail("Instagram accepts MP4 or MOV videos only");
     if ((video.sizeBytes ?? 0) > INSTAGRAM_REEL.maxBytes) throw fail(`Instagram reels can be at most ${mb(INSTAGRAM_REEL.maxBytes)}`);
+    // Probed at upload: a codec/fps Instagram can't take fails now, not after minutes of processing.
+    const codec = video.metadata?.codec;
+    if (codec?.video && !(INSTAGRAM_REEL_CODECS.video as readonly string[]).includes(codec.video.toLowerCase())) {
+      throw fail(`Instagram needs H.264 or HEVC video (this file is ${codec.video.toUpperCase()}). Re-export it as MP4 (H.264 + AAC).`);
+    }
+    if (codec?.audio && !(INSTAGRAM_REEL_CODECS.audio as readonly string[]).includes(codec.audio.toLowerCase())) {
+      throw fail(`Instagram needs AAC audio (this file has ${codec.audio.toUpperCase()}). Re-export it as MP4 (H.264 + AAC).`);
+    }
+    const fps = video.metadata?.fps;
+    if (fps && (fps < INSTAGRAM_REEL_CODECS.minFps - 0.5 || fps > INSTAGRAM_REEL_CODECS.maxFps + 0.5)) {
+      throw fail(`Instagram needs ${INSTAGRAM_REEL_CODECS.minFps}–${INSTAGRAM_REEL_CODECS.maxFps} fps (this video is ${Math.round(fps)} fps).`);
+    }
     const seconds = video.durationSeconds;
     if (seconds != null && seconds < INSTAGRAM_REEL.minSeconds) throw fail(`Instagram reels must be at least ${INSTAGRAM_REEL.minSeconds} seconds long`);
     if (seconds != null && seconds > INSTAGRAM_REEL.maxSeconds) throw fail(`Instagram reels can be at most ${INSTAGRAM_REEL.maxSeconds / 60} minutes long`);
     const cover = ctx.thumbnail;
     if (cover) {
-      if (!(INSTAGRAM_IMAGE.mimeTypes as readonly string[]).includes(cover.mimeType)) throw fail(`The cover image: ${INSTAGRAM_JPEG_ONLY_MESSAGE}`);
       if ((cover.sizeBytes ?? 0) > INSTAGRAM_IMAGE.maxBytes) throw fail(`The cover image can be at most ${mb(INSTAGRAM_IMAGE.maxBytes)}`);
     }
     return;
@@ -65,7 +82,8 @@ export function assertInstagramPublishable(ctx: Pick<PublishContext, "media" | "
   }
   for (const photo of ctx.media) {
     if (photo.type !== "image") throw fail("Photo posts can only contain images");
-    if (!(INSTAGRAM_IMAGE.mimeTypes as readonly string[]).includes(photo.mimeType)) throw fail(INSTAGRAM_JPEG_ONLY_MESSAGE);
+    const { width, height } = photo;
+    if (width && height && (width / height < INSTAGRAM_IMAGE.aspectRatio.min || width / height > INSTAGRAM_IMAGE.aspectRatio.max)) throw fail(INSTAGRAM_ASPECT_MESSAGE);
     if ((photo.sizeBytes ?? 0) > INSTAGRAM_IMAGE.maxBytes) throw fail(`Instagram photos can be at most ${mb(INSTAGRAM_IMAGE.maxBytes)}`);
   }
 }
@@ -251,17 +269,17 @@ async function carouselUnit(provider: InstagramProvider, ctx: PublishContext): P
 async function firstUnfinished(provider: InstagramProvider, ids: string[]): Promise<"wait" | "done"> {
   let waiting = false;
   for (const id of ids) {
-    const status = (await provider.getContainerStatus(id)).status_code;
+    const { status_code: status, status: detail } = await provider.getContainerStatus(id);
     if (status === "FINISHED") continue;
     if (status === "IN_PROGRESS") waiting = true;
-    else throw failedContainer(status);
+    else throw failedContainer(status, detail);
   }
   return waiting ? "wait" : "done";
 }
 
 /** One status check per step; ≤ 10 checks, 60 s apart. */
 async function pollContainer(provider: InstagramProvider, ctx: PublishContext, containerId: string, label: string): Promise<PrepareStep | void> {
-  const status = (await provider.getContainerStatus(containerId)).status_code;
+  const { status_code: status, status: detail } = await provider.getContainerStatus(containerId);
   if (status === "FINISHED" || status === "PUBLISHED") {
     await ctx.save({ containerReady: true, pollCount: 0 }, ctx.scheduled ? "Ready — waiting for the scheduled time" : "Media processed");
     return;
@@ -273,22 +291,62 @@ async function pollContainer(provider: InstagramProvider, ctx: PublishContext, c
     await resetContainer(ctx, true);
     return { done: false, next: "ig-rebuild" };
   }
-  throw failedContainer(status);
+  throw failedContainer(status, detail);
+}
+
+/** Wait before check `count` (1-based), from the backoff schedule. */
+function pollInterval(count: number): number {
+  let seen = 0;
+  for (const step of INSTAGRAM_CONTAINER_POLL.steps) {
+    seen += step.checks;
+    if (count <= seen) return step.intervalSeconds;
+  }
+  return INSTAGRAM_CONTAINER_POLL.steps.at(-1)!.intervalSeconds;
 }
 
 async function nextPoll(ctx: PublishContext, label: string): Promise<PrepareStep> {
-  const count = Number((ctx.progress as Progress).pollCount ?? 0) + 1;
+  const p = ctx.progress as Progress;
+  const count = Number(p.pollCount ?? 0) + 1;
+  const minutes = p.containerCreatedAt ? Math.floor((Date.now() - Date.parse(p.containerCreatedAt)) / 60_000) : 0;
   if (count > INSTAGRAM_CONTAINER_POLL.maxChecks) {
-    throw new PermanentPublishError("instagram_processing_timeout", "Instagram took too long to process the media. Retry the post.");
+    throw new PermanentPublishError(
+      "instagram_processing_timeout",
+      `Instagram was still processing the media after ${minutes} minutes. Retry the post; a shorter or smaller video processes faster.`,
+    );
   }
-  await ctx.save({ pollCount: count }, "Instagram is processing the media");
-  return { done: false, next: `ig-poll-${label}-${count}`, waitSeconds: INSTAGRAM_CONTAINER_POLL.intervalSeconds };
+  await ctx.save({ pollCount: count }, `Instagram is processing the media${minutes >= 1 ? ` (${minutes} min so far; long videos can take 10–30 min)` : ""}`);
+  return { done: false, next: `ig-poll-${label}-${count}`, waitSeconds: pollInterval(count) };
 }
 
-function failedContainer(status: string) {
-  return status === "EXPIRED"
-    ? new PermanentPublishError("instagram_container_expired", "Instagram's media container expired. Retry the post.")
-    : new PermanentPublishError("instagram_processing_failed", "Instagram couldn't process the media. Check the format (MP4/MOV H.264 + AAC for video, JPEG for photos) and retry.");
+/** Meta validation subcodes (also returned in a container's ERROR status) → what to fix. */
+export const INSTAGRAM_VALIDATION: Record<string, string> = {
+  "2207004": "The image is too large for Instagram (max 8 MB).",
+  // Fannout converts formats itself, so a rejection here is about shape: never cropped.
+  "2207005": INSTAGRAM_ASPECT_MESSAGE,
+  "2207009": INSTAGRAM_ASPECT_MESSAGE,
+  "2207010": "The caption is too long for Instagram (max 2,200 characters).",
+  "2207026": "Instagram doesn't support this video format. Use MP4 with H.264 video and AAC audio.",
+  "2207028": "A carousel needs 2 to 20 photos.",
+  "2207040": "This post has too many tags or mentions for Instagram.",
+  "2207052": "Instagram couldn't download the media from its link. Check that storage is reachable from the internet, then retry.",
+  "2207057": "The cover frame (ms) is outside the video. Pick an earlier time or a cover image.",
+  // Ingestion failed after the container was created: most often Meta couldn't fetch the file.
+  "2207076": "Instagram couldn't fetch or ingest the video. Check that the media URL is publicly reachable (S3_PUBLIC_ENDPOINT), then retry. If it is, re-export as MP4 (H.264 + AAC, faststart) and retry.",
+};
+
+/** ERROR/EXPIRED container → the reason Instagram gave (status text, mapped when it carries a known subcode). */
+function failedContainer(status: string, detail?: string) {
+  if (status === "EXPIRED") return new PermanentPublishError("instagram_container_expired", "Instagram's media container expired. Retry the post.");
+  const sub = /\b(2207\d{3})\b/.exec(detail ?? "")?.[1];
+  const known = sub ? INSTAGRAM_VALIDATION[sub] : undefined;
+  if (known) return new PermanentPublishError(`instagram_${sub}`, known);
+  const reason = detail?.replace(/^ERROR:?\s*/i, "").trim();
+  return new PermanentPublishError(
+    "instagram_processing_failed",
+    reason
+      ? `Instagram couldn't process the media: ${reason.slice(0, 300)}`
+      : "Instagram couldn't process the media and gave no reason. Check the video (MP4/MOV, H.264 + AAC, 23–60 fps) and the cover image, then retry.",
+  );
 }
 
 async function findPublished(provider: InstagramProvider, p: Progress): Promise<string | null> {

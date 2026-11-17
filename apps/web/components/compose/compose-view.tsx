@@ -26,7 +26,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '~/components/ui/tooltip
 import { ToggleGroup, ToggleGroupItem } from '~/components/ui/toggle-group'
 import { useDebouncedValue } from '~/hooks/use-debounced-value'
 import {
-    autoThumbnail,
+    resolveThumbnail,
+    THUMBNAIL_NONE,
     clearDraft,
     isManualPost,
     postTypeOf,
@@ -65,7 +66,9 @@ type AiIssue = RouterOutputs['ai']['getGeneration']['issues'][number]
 
 /** Every media id a draft points at (slots and AI sources). */
 function referencedIds(d: ComposeDraft): string[] {
-    return [d.videoId, ...d.photoIds, ...Object.values(d.thumbnails), ...d.thumbnailPool, d.aiJsonId, d.aiSubtitleId].filter((id): id is string => Boolean(id))
+    return [d.videoId, ...d.photoIds, ...Object.values(d.thumbnailOverrides), ...d.thumbnailMaster, d.aiJsonId, d.aiSubtitleId].filter(
+        (id): id is string => Boolean(id) && id !== THUMBNAIL_NONE
+    )
 }
 
 /** Draft without these media (a cancelled upload leaves every slot). */
@@ -75,8 +78,8 @@ function withoutMedia(d: ComposeDraft, ids: string[]): Partial<ComposeDraft> {
         videoId: gone(d.videoId) ? null : d.videoId,
         photoIds: d.photoIds.filter((id) => !gone(id)),
         photoOverrides: Object.fromEntries(Object.entries(d.photoOverrides).map(([key, list]) => [key, list.filter((id) => !gone(id))])),
-        thumbnails: Object.fromEntries(Object.entries(d.thumbnails).filter(([, id]) => !gone(id))),
-        thumbnailPool: d.thumbnailPool.filter((id) => !gone(id)),
+        thumbnailOverrides: Object.fromEntries(Object.entries(d.thumbnailOverrides).filter(([, id]) => !gone(id))),
+        thumbnailMaster: d.thumbnailMaster.filter((id) => !gone(id)),
         aiJsonId: gone(d.aiJsonId) ? null : d.aiJsonId,
         aiSubtitleId: gone(d.aiSubtitleId) ? null : d.aiSubtitleId,
     }
@@ -183,7 +186,7 @@ export function ComposeView() {
     // Media referenced by a restored draft but not loaded yet.
     const referenced = useMemo(
         () =>
-            [...new Set([draft.videoId, ...draft.photoIds, ...Object.values(draft.thumbnails), ...draft.thumbnailPool, draft.aiJsonId, draft.aiSubtitleId].filter(Boolean) as string[])].filter(
+            [...new Set(referencedIds(draft))].filter(
                 (id) => !cache[id]
             ),
         [draft, cache]
@@ -221,10 +224,11 @@ export function ComposeView() {
     const targets = selected.filter((c) => supports(c) && c.status === 'connected')
     const excluded = selected.filter((c) => !supports(c))
     const video = draft.videoId ? (cache[draft.videoId] ?? null) : null
-    const thumbPool = draft.thumbnailPool.map((id) => cache[id]).filter((m): m is MediaLite => Boolean(m))
-    /** A card's own thumbnail, else the pool image matching the platform's shape (landscape → YouTube, portrait → Instagram cover). */
-    const thumbnailOf = (connection: Connection) =>
-        draft.thumbnails[connection.id] ?? autoThumbnail(thumbPool, capsFor(connection)?.thumbnailRules?.aspect)?.id ?? null
+    const thumbMaster = draft.thumbnailMaster.map((id) => cache[id]).filter((m): m is MediaLite => Boolean(m))
+    /** Derived on every render, keyed by connection: override ?? master (closest shape) ?? none. Never copied. */
+    const resolvedThumbnail = (connection: Connection) =>
+        resolveThumbnail(capsFor(connection), draft.thumbnailMaster, draft.thumbnailOverrides[connection.id], cache)
+    const thumbnailOf = (connection: Connection) => resolvedThumbnail(connection).id
     // Thumbnails only exist for platforms whose capabilities say so.
     const thumbTargets = targets.filter((c) => capsFor(c)?.supportsThumbnail)
     const photos = draft.photoIds.map((id) => cache[id]).filter((m): m is MediaLite => Boolean(m))
@@ -269,8 +273,8 @@ export function ComposeView() {
             const first = ids[0]!
             if (slot === 'video') update({ videoId: first, folderId: null })
             else if (slot === 'photos') update((d) => ({ photoIds: [...d.photoIds, ...ids.filter((id) => !d.photoIds.includes(id))], photoOverrides: {}, folderId: null }))
-            else if (slot === 'thumbnail' && connectionId) update((d) => ({ thumbnails: { ...d.thumbnails, [connectionId]: first } }))
-            else if (slot === 'thumbnail') update((d) => ({ thumbnailPool: [...d.thumbnailPool, ...ids.filter((id) => !d.thumbnailPool.includes(id))] }))
+            else if (slot === 'thumbnail' && connectionId) update((d) => ({ thumbnailOverrides: { ...d.thumbnailOverrides, [connectionId]: first } }))
+            else if (slot === 'thumbnail') update((d) => ({ thumbnailMaster: [...d.thumbnailMaster, ...ids.filter((id) => !d.thumbnailMaster.includes(id))] }))
             else if (slot === 'json') update({ aiJsonId: first })
             else update({ aiSubtitleId: first })
         } finally {
@@ -370,8 +374,8 @@ export function ComposeView() {
             aiSubtitleId: d.aiSubtitleId ?? subtitles?.mediaId ?? null,
             videoId: d.mediaType === 'video' ? (main?.mediaId ?? d.videoId) : d.videoId,
             photoIds: d.mediaType === 'photos' && images.length ? images.map((i) => i.mediaId) : d.photoIds,
-            // The folder's thumbnail-role images become the pool (primary first); cards keep their own picks.
-            thumbnailPool: d.thumbnailPool.length ? d.thumbnailPool : thumb ? [thumb.mediaId, ...images.filter((i) => i.mediaId !== thumb.mediaId).map((i) => i.mediaId)] : [],
+            // The folder's thumbnail-role images become the master (primary first); card overrides stay.
+            thumbnailMaster: d.thumbnailMaster.length ? d.thumbnailMaster : thumb ? [thumb.mediaId, ...images.filter((i) => i.mediaId !== thumb.mediaId).map((i) => i.mediaId)] : [],
         }))
         toast.success(`Filled from ${folder.name}`)
     }
@@ -389,6 +393,7 @@ export function ComposeView() {
                 ? {
                       thumbnailByConnection: Object.fromEntries(
                           targets
+                              // The resolved thumbnail per connection: publishing needs nothing else.
                               .filter((c) => capsFor(c)?.supportsThumbnail && thumbnailOf(c))
                               .map((c) => [c.id, thumbnailOf(c) as string])
                       ),
@@ -830,16 +835,16 @@ export function ComposeView() {
                                 <span className="flex min-w-0 flex-1 flex-col">
                                     <span className="text-label text-foreground">Thumbnails (optional)</span>
                                     <span className="text-meta">
-                                        {`For ${thumbTargets.map((c) => capsFor(c)?.label).filter((label, i, all) => all.indexOf(label) === i).join(', ')}. Pick several: landscape images go to landscape platforms, portrait ones to vertical covers. Each card can pick its own.`}
+                                        {`For ${thumbTargets.map((c) => capsFor(c)?.label).filter((label, i, all) => all.indexOf(label) === i).join(', ')}. One image goes to every account; with several, each account gets the one closest to its shape. Images are never cropped. Each card can pick its own.`}
                                     </span>
                                 </span>
                                 <Button variant="secondary" size="sm" onPointerEnter={() => warmPicker('image')} onFocus={() => warmPicker('image')} onClick={() => setPicker({ kind: 'thumbnail', connectionId: null })}>
-                                    {thumbPool.length ? 'Change' : 'Choose'}
+                                    {thumbMaster.length ? 'Change' : 'Choose'}
                                 </Button>
                             </div>
-                            {thumbPool.length ? (
+                            {thumbMaster.length ? (
                                 <ul className="flex flex-wrap gap-2" aria-label="Picked thumbnails">
-                                    {thumbPool.map((thumb) => {
+                                    {thumbMaster.map((thumb) => {
                                         const users = thumbTargets.filter((c) => thumbnailOf(c) === thumb.id)
                                         return (
                                             <li key={thumb.id} className="flex w-32 flex-col gap-1">
@@ -851,7 +856,7 @@ export function ComposeView() {
                                                             variant="ghost"
                                                             size="icon-sm"
                                                             aria-label={`Remove ${thumb.name}`}
-                                                            onClick={() => update((d) => ({ thumbnailPool: d.thumbnailPool.filter((id) => id !== thumb.id) }))}
+                                                            onClick={() => update((d) => ({ thumbnailMaster: d.thumbnailMaster.filter((id) => id !== thumb.id) }))}
                                                         >
                                                             <XIcon aria-hidden />
                                                         </Button>
@@ -1009,8 +1014,8 @@ export function ComposeView() {
                     {targets.map((connection) => {
                         const caps = capsFor(connection)!
                         const textField = textFieldOf(caps, draft.mediaType)
-                        const thumbId = thumbnailOf(connection)
-                        const ownThumb = Boolean(draft.thumbnails[connection.id])
+                        const resolved = resolvedThumbnail(connection)
+                        const thumbId = resolved.id
                         return (
                             <AccountCard
                                 key={connection.id}
@@ -1032,15 +1037,20 @@ export function ComposeView() {
                                     }))
                                 }
                                 onPickThumbnail={() => setPicker({ kind: 'thumbnail', connectionId: connection.id })}
-                                thumbnailInherited={!ownThumb && Boolean(thumbId)}
-                                onResetThumbnail={
-                                    ownThumb
+                                thumbnailSource={resolved.source}
+                                onUseMaster={
+                                    resolved.source === 'custom'
                                         ? () =>
                                               update((d) => {
-                                                  const thumbnails = { ...d.thumbnails }
-                                                  delete thumbnails[connection.id]
-                                                  return { thumbnails }
+                                                  const thumbnailOverrides = { ...d.thumbnailOverrides }
+                                                  delete thumbnailOverrides[connection.id]
+                                                  return { thumbnailOverrides }
                                               })
+                                        : undefined
+                                }
+                                onNoThumbnail={
+                                    thumbId
+                                        ? () => update((d) => ({ thumbnailOverrides: { ...d.thumbnailOverrides, [connection.id]: THUMBNAIL_NONE } }))
                                         : undefined
                                 }
                                 aiFor={aiFor(connection)}
@@ -1141,15 +1151,15 @@ export function ComposeView() {
                 type="image"
                 multiple={picker?.kind === 'thumbnail' && picker.connectionId === null}
                 title={picker?.kind === 'thumbnail' && picker.connectionId ? 'Choose a thumbnail' : 'Choose thumbnails'}
-                initial={picker?.kind === 'thumbnail' && picker.connectionId === null ? thumbPool : []}
+                initial={picker?.kind === 'thumbnail' && picker.connectionId === null ? thumbMaster : []}
                 onFiles={(files) => void addToSlot('thumbnail', files, picker?.kind === 'thumbnail' ? picker.connectionId : null)}
                 onPick={(items) => {
                     if (picker?.kind !== 'thumbnail') return
                     remember(items)
                     const id = picker.connectionId
                     const [item] = items
-                    if (!id) update({ thumbnailPool: items.map((m) => m.id) })
-                    else if (item) update((d) => ({ thumbnails: { ...d.thumbnails, [id]: item.id } }))
+                    if (!id) update({ thumbnailMaster: items.map((m) => m.id) })
+                    else if (item) update((d) => ({ thumbnailOverrides: { ...d.thumbnailOverrides, [id]: item.id } }))
                 }}
                 onFolder={
                     picker?.kind === 'thumbnail' && picker.connectionId === null
@@ -1172,7 +1182,7 @@ export function ComposeView() {
                                       height: item.media.height,
                                   }))
                               )
-                              update({ thumbnailPool: sorted.map((item) => item.mediaId) })
+                              update({ thumbnailMaster: sorted.map((item) => item.mediaId) })
                           }
                         : undefined
                 }

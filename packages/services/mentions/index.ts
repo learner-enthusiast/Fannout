@@ -15,13 +15,16 @@ import {
 } from "@repo/database";
 import { errors } from "@repo/errors";
 import { logger } from "@repo/logger";
-import { XProvider } from "@repo/providers";
+import { InstagramProvider, XProvider } from "@repo/providers";
 import { z } from "zod";
 import { cached, invalidate } from "../cache";
 import { decodeKeyCursor, toKeyPage } from "../common/pagination";
 import { createProviderForConnection } from "../provider-factory";
 import {
   CreateMentionInputSchema,
+  INSTAGRAM_HANDLE_PATTERN,
+  InstagramUserLookupSchema,
+  LookupInstagramUserInputSchema,
   MentionContactPageSchema,
   MentionContactViewSchema,
   MentionPlatformSchema,
@@ -30,6 +33,7 @@ import {
   SearchMentionsInputSchema,
   UpdateMentionInputSchema,
   type CreateMentionInput,
+  type InstagramUserLookup,
   type MentionContactView,
   type MentionPlatform,
 } from "./model";
@@ -88,29 +92,48 @@ export async function searchMentionContacts(userId: string, input: unknown) {
   });
 }
 
+/** `foo_` must match a literal underscore, not "any character". */
+const likePrefix = (q: string) => `${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+
+/** Sort key: use count, then last use (ms; -1 = never). Encoded together in the key cursor. */
+const lastUsedMs = sql<number>`coalesce(floor(extract(epoch from ${mentionContacts.lastUsedAt}) * 1000), -1)::bigint`;
+const SortKeySchema = z.string().regex(/^\d+:-?\d+$/).transform((value) => {
+  const [count, last] = value.split(":");
+  return { count: Number(count), last: Number(last) };
+});
+
+/**
+ * Prefix match on handle or display name (any word of it), ordered by use count, then most recent use,
+ * then id. Empty query = the most used/recent contacts. Pages of `limit` (max 10 per the API rules).
+ */
 async function loadMentionContacts(
   userId: string,
   { platform, q, cursor, limit }: { platform: MentionPlatform; q: string; cursor?: string | null; limit: number },
 ) {
   const after = cursor ? decodeKeyCursor(cursor) : null;
-  const afterCount = after ? z.coerce.number().int().nonnegative().parse(after.sortKey) : null;
-  const pattern = `%${q}%`;
+  const key = after ? SortKeySchema.parse(after.sortKey) : null;
+  const prefix = likePrefix(q);
   const rows = await db
-    .select()
+    .select({ row: mentionContacts, last: lastUsedMs })
     .from(mentionContacts)
     .where(and(
       eq(mentionContacts.userId, userId),
       eq(mentionContacts.platform, platform),
-      q ? sql`(${mentionContacts.displayName} || ' ' || coalesce(${mentionContacts.handle}, '')) ilike ${pattern}` : undefined,
-      after && afterCount !== null ? or(
-        lt(mentionContacts.useCount, afterCount),
-        and(eq(mentionContacts.useCount, afterCount), gt(mentionContacts.id, after.id)),
-      ) : undefined,
+      q
+        ? sql`(coalesce(${mentionContacts.handle}, '') ilike ${prefix} or ${mentionContacts.displayName} ilike ${prefix} or ${mentionContacts.displayName} ilike ${`% ${prefix}`})`
+        : undefined,
+      after && key
+        ? or(
+          lt(mentionContacts.useCount, key.count),
+          and(eq(mentionContacts.useCount, key.count), sql`${lastUsedMs} < ${key.last}`),
+          and(eq(mentionContacts.useCount, key.count), sql`${lastUsedMs} = ${key.last}`, gt(mentionContacts.id, after.id)),
+        )
+        : undefined,
     ))
-    .orderBy(desc(mentionContacts.useCount), asc(mentionContacts.id))
+    .orderBy(desc(mentionContacts.useCount), desc(lastUsedMs), asc(mentionContacts.id))
     .limit(limit + 1);
-  const page = toKeyPage(rows, limit, (row) => ({ sortKey: String(row.useCount), id: row.id }));
-  return { items: page.items.map(view), nextCursor: page.nextCursor };
+  const page = toKeyPage(rows, limit, ({ row, last }) => ({ sortKey: `${row.useCount}:${Number(last)}`, id: row.id }));
+  return { items: page.items.map(({ row }) => view(row)), nextCursor: page.nextCursor };
 }
 
 async function findByTarget(userId: string, platform: MentionPlatform, target: string) {
@@ -252,4 +275,117 @@ export async function saveTagContacts(userId: string, platform: string, username
     .set({ useCount: sql`${mentionContacts.useCount} + 1`, lastUsedAt: new Date() })
     .where(and(eq(mentionContacts.userId, userId), eq(mentionContacts.platform, parsed.data), inArray(mentionContacts.handle, handles)));
   await invalidate(userId, "mentions");
+}
+
+// ---------------------------------------------------------------------------
+// Instagram: contacts filled from published posts + exact-username lookup
+// ---------------------------------------------------------------------------
+
+/** @handles in a caption (an email's "a@b" is not one); trailing periods are punctuation. */
+export function instagramHandlesInText(text: string): string[] {
+  const out: string[] = [];
+  for (const match of text.matchAll(/(?:^|[^A-Za-z0-9_.@])@([A-Za-z0-9_.]{1,30})/g)) {
+    const handle = match[1]!.replace(/\.+$/, "");
+    if (INSTAGRAM_HANDLE_PATTERN.test(handle)) out.push(handle);
+  }
+  return out;
+}
+
+const InstagramUsageSchema = z.object({
+  tags: z.array(z.object({ username: z.string() })).catch([]),
+  collaborators: z.array(z.string()).catch([]),
+  caption: z.string().catch(""),
+});
+
+/** Every username a post used: tagged people, collaborators and @mentions in the caption (lowercase, unique). */
+export function instagramHandlesOfPost(usage: { tags?: unknown; collaborators?: unknown; caption?: unknown }): string[] {
+  const { tags, collaborators, caption } = InstagramUsageSchema.parse(usage);
+  const all = [...tags.map((t) => t.username), ...collaborators, ...instagramHandlesInText(caption)];
+  return [...new Set(all.map((h) => h.replace(/^@/, "").toLowerCase()).filter((h) => INSTAGRAM_HANDLE_PATTERN.test(h)))];
+}
+
+/**
+ * Upserts Instagram contacts (matched case-insensitively) and records their use.
+ * increment: +1 each (after a publish). atLeast: use_count = greatest(current, given) and
+ * last_used_at = greatest (backfill; running it twice changes nothing).
+ */
+export async function upsertInstagramContacts(
+  userId: string,
+  usage: Map<string, { count: number; lastUsedAt: Date | null }>,
+  mode: "increment" | "atLeast",
+): Promise<number> {
+  const handles = [...usage.keys()].filter((h) => INSTAGRAM_HANDLE_PATTERN.test(h));
+  if (!handles.length) return 0;
+  const existing = await db
+    .select({ id: mentionContacts.id, handle: mentionContacts.handle })
+    .from(mentionContacts)
+    .where(and(eq(mentionContacts.userId, userId), eq(mentionContacts.platform, "instagram"), inArray(sql`lower(${mentionContacts.handle})`, handles)));
+  const known = new Map(existing.map((row) => [row.handle!.toLowerCase(), row.id]));
+  const missing = handles.filter((h) => !known.has(h));
+  if (missing.length) {
+    const inserted = await db
+      .insert(mentionContacts)
+      .values(missing.map((handle) => ({ userId, platform: "instagram", displayName: handle, handle })))
+      .onConflictDoNothing()
+      .returning({ id: mentionContacts.id, handle: mentionContacts.handle });
+    for (const row of inserted) known.set(row.handle!.toLowerCase(), row.id);
+  }
+  for (const handle of handles) {
+    const id = known.get(handle);
+    const use = usage.get(handle)!;
+    if (!id) continue;
+    await db
+      .update(mentionContacts)
+      .set(
+        mode === "increment"
+          ? { useCount: sql`${mentionContacts.useCount} + ${use.count}`, lastUsedAt: use.lastUsedAt ?? new Date() }
+          : {
+            useCount: sql`greatest(${mentionContacts.useCount}, ${use.count})`,
+            lastUsedAt: use.lastUsedAt ? sql`greatest(${mentionContacts.lastUsedAt}, ${use.lastUsedAt.toISOString()}::timestamptz)` : sql`${mentionContacts.lastUsedAt}`,
+          },
+      )
+      .where(and(eq(mentionContacts.id, id), eq(mentionContacts.userId, userId)));
+  }
+  await invalidate(userId, "mentions");
+  return handles.length;
+}
+
+/** After Instagram accepts a post: every tag, collaborator and caption @mention becomes a contact (+1 use). */
+export async function recordInstagramContacts(userId: string, usage: { tags?: unknown; collaborators?: unknown; caption?: unknown }) {
+  const now = new Date();
+  const handles = instagramHandlesOfPost(usage);
+  await upsertInstagramContacts(userId, new Map(handles.map((h) => [h, { count: 1, lastUsedAt: now }])), "increment");
+}
+
+const LOOKUP_TTL_SECONDS = 24 * 60 * 60;
+
+/**
+ * Exact-username lookup through Business Discovery on the user's own IG account (best effort).
+ * Finds Business/Creator accounts only; any error (personal account, permission not granted,
+ * rate limit) is a miss. Hits and misses are cached 24 h per connection (not in the `mentions`
+ * group, which every publish bumps). Never called per keystroke: the composer debounces it.
+ */
+export async function lookupInstagramUser(userId: string, input: unknown): Promise<InstagramUserLookup> {
+  const { socialConnectionId, username } = LookupInstagramUserInputSchema.parse(input);
+  const miss: InstagramUserLookup = { found: false, username, displayName: null, avatarUrl: null };
+  return cached({
+    userId,
+    group: `platform:${socialConnectionId}`,
+    key: "lookupInstagramUser",
+    input: { username },
+    ttlSeconds: LOOKUP_TTL_SECONDS,
+    schema: InstagramUserLookupSchema,
+    load: async () => {
+      const provider = await createProviderForConnection({ userId, connectionId: socialConnectionId });
+      if (!(provider instanceof InstagramProvider)) return errors.badRequest("Not an Instagram account");
+      try {
+        const profile = await provider.getBusinessDiscovery(username);
+        if (!profile?.username) return miss;
+        return { found: true, username: profile.username, displayName: profile.name ?? null, avatarUrl: profile.profile_picture_url ?? null };
+      } catch (error) {
+        logger.debug("Instagram business discovery miss", { userId, error: error instanceof Error ? error.message : String(error) });
+        return miss;
+      }
+    },
+  });
 }

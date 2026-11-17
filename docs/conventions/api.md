@@ -124,10 +124,39 @@ inputs, cached by input hash as an `ai_generations` row with `scope.kind = "brie
   duplicates, positions only where the platform takes them. A platform rejecting a tag is shown on the
   post — tags are never dropped silently. The one exception is X: one retry without tags, then a
   `post_warning` notification naming who couldn't be tagged.
+- **Mention/tag suggestions always come from mention_contacts, filled automatically after each publish.**
+  `mentions.search` (prefix on handle/display name, use count then last use, 10 per page, `mentions` cache
+  group) feeds the caption @mention popover and every tag/collaborator picker (one shared popover). After an
+  Instagram publish every tag, collaborator and caption @handle is upserted (+1 use); `pnpm
+  mentions:backfill-instagram` fills older posts (idempotent). Instagram has no user search: the only live
+  call is the exact-username Business Discovery lookup (`mentions.lookupInstagram`, server-side, debounced,
+  cached 24 h per connection, any error = "Use @typed"). "Use @typed" is always the last option.
 - **Paid lookups are saved and cached, never repeated.** X user ids (`GET /2/users/by/username`, billed) are
   resolved once at selection time, saved on the mention contact (`mention_contacts.platform_ref`) and
   cached in the `mentions` group. Check the contact before calling the platform.
 - New usernames used in a published post are saved to `mention_contacts` for the tag popover.
+
+## Media form factor and format conversion
+
+- **Original form factor.** Never crop/pad/resize to fit a platform. Only format conversion (and
+  proportional downscale as a last resort for byte limits) is allowed, via `ensureFormat`
+  (`packages/services/media/derivatives.ts`). Originals are never changed. Every platform gets the asset in
+  its original shape: no crop, pad, letterbox, stretch or aspect-ratio change.
+- **Format needs live in capabilities.** `*_COMPOSE.imageFormats` declares per slot (`image`,
+  `carouselImage`, `cover`) the `acceptedImageFormats`, `maxImageBytes` and, where the platform has one,
+  `aspectRatio`. Only values documented in the provider's model go there; no guesses.
+- **The publish layer converts, not the publishers.** `publishing/formats.ts` checks every image against its
+  slot before the publisher runs; each conversion is its own Inngest prepare step, and publishers receive rows
+  pointing at the derivative (their `urlSource` / `streamSource` calls stay unchanged).
+- **Derivatives** are stored next to the original as `derived/{mediaId}/{format}.jpg` and recorded in
+  `media.metadata.derivatives[format]` (`key`, `width`, `height`, `bytes`, `scaled`, `sourceChecksum`).
+  JPEG: EXIF orientation applied then metadata stripped, sRGB, alpha flattened onto white, exact size,
+  quality 92 progressive 4:4:4, lowered to 80 before any proportional 10 % downscale. Built once (Redis lock
+  + deterministic key), reused while the source checksum matches, deleted with the media.
+- **Validation:** a format the platform doesn't take is an info note on the card ("PNG will be converted to
+  JPEG (same size and shape)"), never an error. Only a shape that would need reshaping (e.g. an Instagram
+  feed/carousel photo outside 4:5–1.91:1) is an error; the matching platform error at publish time
+  (Instagram 2207009 / 2207005) maps to the same message.
 
 ## Caching
 

@@ -1,12 +1,15 @@
 import {
   createMentionContact,
   deleteMentionContact,
+  lookupInstagramUser,
   resolveXUser,
   searchMentionContacts,
   updateMentionContact,
 } from "@repo/services/mentions";
 import {
   CreateMentionInputBaseSchema,
+  InstagramUserLookupSchema,
+  LookupInstagramUserInputSchema,
   MentionContactPageSchema,
   MentionContactViewSchema,
   MentionIdInputSchema,
@@ -43,6 +46,16 @@ export const mentionsRouter = router({
     .input(ResolveXUserInputSchema)
     .output(ResolvedXUserSchema)
     .mutation(({ ctx, input }) => resolveXUser(ctx.dbUserId, input)),
+
+  /**
+   * Instagram has no user search: suggestions come from saved contacts. This exact-username lookup
+   * (Business Discovery, Business/Creator accounts only) is best effort; found = false means "tag as typed".
+   */
+  lookupInstagram: rateLimited(scoped("posts:read"), "publish")
+    .meta({ openapi: { method: "GET", path: "/mentions/instagram/lookup", summary: "Look up an exact Instagram username (Business/Creator accounts; cached 24 h)", protect: true } })
+    .input(LookupInstagramUserInputSchema)
+    .output(InstagramUserLookupSchema)
+    .query(({ ctx, input }) => lookupInstagramUser(ctx.dbUserId, input)),
 
   delete: scoped("posts:write")
     .meta({ openapi: { method: "DELETE", path: "/mentions/{id}", summary: "Delete a saved mention contact", protect: true } })

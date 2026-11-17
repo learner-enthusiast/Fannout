@@ -25,7 +25,7 @@ export const MentionContactPageSchema = paginatedOutput(MentionContactViewSchema
 
 export const SearchMentionsInputSchema = PaginationInputSchema.extend({
   platform: MentionPlatformSchema.describe("Platform whose contacts to search."),
-  q: z.string().trim().max(100).default("").describe("Case-insensitive display-name/handle search; empty returns most-used contacts."),
+  q: z.string().trim().max(100).transform((value) => value.replace(/^@/, "")).default("").describe("Case-insensitive prefix of the handle or display name (a leading @ is ignored); empty returns the most-used, then most recently used, contacts."),
 });
 
 /** OpenAPI input (no refinements: trpc-to-openapi can't omit fields from refined objects). */
@@ -74,3 +74,23 @@ export const ResolvedXUserSchema = z.object({
   displayName: z.string().describe("Account name."),
 });
 export type ResolvedXUser = z.infer<typeof ResolvedXUserSchema>;
+
+/** Instagram usernames: 1–30 letters, numbers, periods and underscores. */
+export const INSTAGRAM_HANDLE_PATTERN = /^[A-Za-z0-9_.]{1,30}$/;
+
+export const LookupInstagramUserInputSchema = z.object({
+  socialConnectionId: z.uuid().describe("A connected Instagram account; the lookup runs through its Business Discovery field."),
+  username: z
+    .string()
+    .trim()
+    .regex(/^@?[A-Za-z0-9_.]{1,30}$/, "Instagram usernames are 1–30 letters, numbers, periods or underscores")
+    .transform((value) => value.replace(/^@/, "").toLowerCase())
+    .describe("Full Instagram username, with or without @."),
+});
+export const InstagramUserLookupSchema = z.object({
+  found: z.boolean().describe("Whether Instagram returned a profile. False for personal accounts, unknown usernames or when the lookup isn't available; tag the username as typed instead."),
+  username: z.string().describe("Username as typed (found = false) or as Instagram spells it."),
+  displayName: z.string().nullable().describe("Account name, when found."),
+  avatarUrl: z.string().nullable().describe("Profile picture URL, when found (Instagram CDN, expires)."),
+});
+export type InstagramUserLookup = z.infer<typeof InstagramUserLookupSchema>;

@@ -28,6 +28,19 @@ export const InstagramAccountSchema = z.looseObject({
 });
 export type InstagramAccount = z.infer<typeof InstagramAccountSchema>;
 
+/** GET /{ig-user-id}?fields=business_discovery.username(<name>){username,name,profile_picture_url}. Business/Creator accounts only. */
+export const InstagramBusinessDiscoverySchema = z.looseObject({
+  business_discovery: z
+    .looseObject({
+      id: z.string().optional(),
+      username: z.string(),
+      name: z.string().optional(),
+      profile_picture_url: z.string().optional(),
+    })
+    .optional(),
+});
+export type InstagramBusinessDiscovery = NonNullable<z.infer<typeof InstagramBusinessDiscoverySchema>["business_discovery"]>;
+
 // ---------- post types & containers ----------
 
 export const InstagramPostTypeSchema = z.enum(["reel", "image", "carousel"]);
@@ -37,6 +50,8 @@ export const InstagramContainerStatusCodeSchema = z.enum(["EXPIRED", "ERROR", "F
 export const InstagramContainerStatusSchema = z.looseObject({
   id: z.string(),
   status_code: InstagramContainerStatusCodeSchema,
+  /** Human-readable detail; on ERROR it names the reason (often with a 2207xxx subcode). */
+  status: z.string().optional(),
 });
 export type InstagramContainerStatus = z.infer<typeof InstagramContainerStatusSchema>;
 
@@ -220,6 +235,12 @@ export const INSTAGRAM_COMPOSE: ComposeCapabilities = {
   supportsThumbnail: true,
   // cover_url on the REELS container.
   thumbnailRules: { maxBytes: INSTAGRAM_IMAGE.maxBytes, mimeTypes: [...INSTAGRAM_IMAGE.mimeTypes], aspect: "portrait", recommended: "1080×1920 (9:16)" },
+  // Graph API takes JPEG only (no PNG/WebP/HEIC), ≤ 8 MB; feed photos 4:5 to 1.91:1, any shape for the Reels cover.
+  imageFormats: {
+    image: { acceptedImageFormats: ["jpeg"], maxImageBytes: INSTAGRAM_IMAGE.maxBytes, aspectRatio: INSTAGRAM_IMAGE.aspectRatio },
+    carouselImage: { acceptedImageFormats: ["jpeg"], maxImageBytes: INSTAGRAM_IMAGE.maxBytes, aspectRatio: INSTAGRAM_IMAGE.aspectRatio },
+    cover: { acceptedImageFormats: ["jpeg"], maxImageBytes: INSTAGRAM_IMAGE.maxBytes },
+  },
   perImageAltTextMax: INSTAGRAM_ALT_TEXT_MAX,
   mediaRules: {
     maxVideoBytes: INSTAGRAM_REEL.maxBytes,

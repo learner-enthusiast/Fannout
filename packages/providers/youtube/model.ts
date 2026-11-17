@@ -30,6 +30,17 @@ export type YouTubeDownloadCaptionInput = z.input<typeof YouTubeDownloadCaptionI
 
 const GB = 1024 * 1024 * 1024;
 
+/** snippet.tags budget (YouTube error "invalidTags": "The request metadata specifies invalid video keywords"). */
+export const YOUTUBE_TAGS_MAX = 500;
+
+/**
+ * Tag length the way YouTube counts it: comma-separated, and a tag containing a space is wrapped in
+ * quotes (+2). `tags.join(",").length` undercounts multi-word tags, which YouTube then rejects.
+ */
+export function youtubeTagsLength(tags: readonly string[]): number {
+  return tags.reduce((sum, tag) => sum + tag.length + (/\s/.test(tag) ? 2 : 0), 0) + Math.max(0, tags.length - 1);
+}
+
 export const YOUTUBE_COMPOSE: ComposeCapabilities = {
   mentions: { supported: false, kind: "text_only", note: "YouTube titles and descriptions do not support mention tagging in this publishing flow." },
   supportsVideo: true,
@@ -51,6 +62,8 @@ export const YOUTUBE_COMPOSE: ComposeCapabilities = {
     recommended: "1280×720 (16:9)",
     note: "Custom thumbnails need a verified YouTube channel.",
   },
+  // Same values as thumbnailRules (thumbnails.set): JPEG or PNG, ≤ 2 MB.
+  imageFormats: { cover: { acceptedImageFormats: ["jpeg", "png"], maxImageBytes: 2 * 1024 * 1024 } },
   mediaRules: { maxVideoBytes: 256 * GB, maxVideoSeconds: 12 * 60 * 60, shortMaxSeconds: 180 },
   // videos.delete / videos.update — https://developers.google.com/youtube/v3/docs/videos/update
   supportsDelete: true,
@@ -104,11 +117,25 @@ export const YouTubeComposeInputSchema = z.object({
   }),
   tags: composeField(
     z
-      .array(z.string().trim().min(1).max(100))
+      .array(
+        z
+          .string()
+          .trim()
+          .min(1)
+          .max(100)
+          .refine((tag) => !/[<>,]/.test(tag), "Tags can't contain <, > or commas"),
+      )
       .max(50)
-      .refine((tags) => tags.join(",").length <= 500, "Tags can total at most 500 characters")
+      .refine((tags) => youtubeTagsLength(tags) <= YOUTUBE_TAGS_MAX, "Tags can total at most 500 characters (a tag with spaces counts 2 more for its quotes)")
       .optional(),
-    { mediaType: "video", label: "Tags", description: "Keywords (each 1–100 chars, at most 50 tags, 500 characters in total).", kind: "tags", maxLength: 500, ai: true },
+    {
+      mediaType: "video",
+      label: "Tags",
+      description: "Keywords (each 1–100 chars, no <, > or commas, at most 50 tags). Total at most 500 characters as YouTube counts it: tags joined by commas, and a tag containing a space counts 2 more (YouTube wraps it in quotes).",
+      kind: "tags",
+      maxLength: YOUTUBE_TAGS_MAX,
+      ai: true,
+    },
   ),
   playlistId: composeField(z.string().min(1).optional(), { mediaType: "video", label: "Playlist", description: "Playlist ID to add the video to, from GET /platforms/youtube/{socialConnectionId}/playlists.", kind: "playlist" }),
   notifySubscribers: composeField(z.boolean().optional(), {

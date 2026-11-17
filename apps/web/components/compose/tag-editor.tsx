@@ -1,18 +1,16 @@
 'use client'
 
-import { MapPinIcon, PlusIcon, XIcon } from 'lucide-react'
+import { MapPinIcon, XIcon } from 'lucide-react'
 import { useRef, useState } from 'react'
 
-import { keepPreviousData } from '@tanstack/react-query'
 import { Badge } from '~/components/ui/badge'
 import { Button } from '~/components/ui/button'
-import { Command, CommandGroup, CommandItem, CommandList } from '~/components/ui/command'
 import { FormField } from '~/components/ui/form-field'
 import { Input } from '~/components/ui/input'
 import { Spinner } from '~/components/ui/spinner'
-import { useDebouncedValue } from '~/hooks/use-debounced-value'
 import type { MediaLite } from '~/lib/compose'
-import { trpc } from '~/trpc/client'
+
+import { MentionSuggestionList, useMentionSuggestions, useSaveLookupHit } from './mention-suggestions'
 
 /** Platforms that keep mention contacts (the tag popover suggests from the same list). */
 export type TagPlatform = 'x' | 'threads' | 'instagram' | 'linkedin' | 'facebook'
@@ -23,8 +21,9 @@ export const isTagPlatform = (platform: string): platform is TagPlatform =>
 const clean = (value: string) => value.trim().replace(/^@/, '')
 
 /**
- * Username field with the mention-contact suggestions (same contacts and list as the @mention
- * popover) plus free text: Enter or "Use @name" adds whatever was typed.
+ * Username field with the shared mention suggestion popover (same contacts and list as the caption
+ * @mention editor), the Instagram exact-username lookup, and "Use @name" as the last option, so a
+ * tag never depends on suggestions. Enter adds whatever was typed.
  */
 export function UsernamePicker({
     platform,
@@ -35,6 +34,7 @@ export function UsernamePicker({
     placeholder = 'Username',
     label,
     autoFocus = false,
+    socialConnectionId,
 }: {
     platform: TagPlatform
     onPick: (username: string) => void
@@ -46,17 +46,14 @@ export function UsernamePicker({
     placeholder?: string
     label: string
     autoFocus?: boolean
+    /** The card's connection (Instagram exact-username lookup runs through it). */
+    socialConnectionId?: string
 }) {
     const [text, setText] = useState('')
     const [open, setOpen] = useState(false)
-    const query = useDebouncedValue(clean(text), 150)
-    const search = trpc.mentions.search.useQuery(
-        { platform, q: query, limit: 10 },
-        { enabled: open && !disabled, staleTime: 0, placeholderData: keepPreviousData }
-    )
-    const taken = new Set(exclude.map((u) => u.toLowerCase()))
-    const contacts = (search.data?.items ?? []).filter((c) => c.handle && !taken.has(c.handle.toLowerCase()))
-    const typed = clean(text)
+    const { contacts, hit, typed } = useMentionSuggestions({ platform, query: text, enabled: open && !disabled, exclude, socialConnectionId })
+    const saveHit = useSaveLookupHit(platform)
+    const withHandle = contacts.filter((c) => c.handle)
 
     const pick = (username: string) => {
         const value = clean(username)
@@ -89,39 +86,18 @@ export function UsernamePicker({
                 />
                 {pending ? <Spinner /> : null}
             </div>
-            {open && !disabled && (contacts.length > 0 || typed) ? (
-                <div className="absolute top-full z-50 mt-1 w-full rounded-surface bg-popover shadow-float ring-1 ring-foreground/5">
-                    <Command shouldFilter={false} className="rounded-surface">
-                        <CommandList>
-                            <CommandGroup heading="Mention contacts">
-                                {contacts.map((contact) => (
-                                    <CommandItem
-                                        key={contact.id}
-                                        value={contact.id}
-                                        onMouseDown={(e) => e.preventDefault()}
-                                        onSelect={() => pick(contact.handle!)}
-                                        className="rounded-control"
-                                    >
-                                        <span className="flex min-w-0 flex-1 flex-col">
-                                            <span>{contact.displayName}</span>
-                                            <span className="text-meta">@{contact.handle}</span>
-                                        </span>
-                                    </CommandItem>
-                                ))}
-                                {typed && !contacts.some((c) => c.handle?.toLowerCase() === typed.toLowerCase()) ? (
-                                    <CommandItem
-                                        value="__typed__"
-                                        onMouseDown={(e) => e.preventDefault()}
-                                        onSelect={() => pick(typed)}
-                                        className="rounded-control"
-                                    >
-                                        <PlusIcon aria-hidden /> Use @{typed}
-                                    </CommandItem>
-                                ) : null}
-                            </CommandGroup>
-                        </CommandList>
-                    </Command>
-                </div>
+            {open && !disabled ? (
+                <MentionSuggestionList
+                    contacts={withHandle}
+                    hit={hit}
+                    last={typed && !withHandle.some((c) => c.handle?.toLowerCase() === typed.toLowerCase()) ? { label: `Use @${typed}`, onSelect: () => pick(typed) } : null}
+                    onContact={(contact) => pick(contact.handle!)}
+                    onHit={(found) => {
+                        // Saved on selection so it is suggested next time; the tag never waits for it.
+                        void saveHit.save(found).catch(() => undefined)
+                        pick(found.username)
+                    }}
+                />
             ) : null}
         </div>
     )
@@ -140,8 +116,10 @@ export function TagList({
     onDismissFailed,
     pending = false,
     error,
+    socialConnectionId,
 }: {
     platform: TagPlatform
+    socialConnectionId?: string
     label: string
     helper?: string
     usernames: string[]
@@ -187,6 +165,7 @@ export function TagList({
                         <div className="min-w-0 flex-1">
                             <UsernamePicker
                                 platform={platform}
+                                socialConnectionId={socialConnectionId}
                                 label={`Add to ${label}`}
                                 exclude={usernames}
                                 disabled={full}
@@ -222,8 +201,10 @@ export function PositionedTagger({
     tags,
     max,
     onChange,
+    socialConnectionId,
 }: {
     platform: TagPlatform
+    socialConnectionId?: string
     photo: MediaLite
     title: string
     tags: PositionedTag[]
@@ -300,6 +281,7 @@ export function PositionedTagger({
                     <div className="min-w-0 flex-1">
                         <UsernamePicker
                             platform={platform}
+                            socialConnectionId={socialConnectionId}
                             label={`Who is at this point on ${title}?`}
                             placeholder="Who is here? Type a username, then Enter"
                             exclude={tags.map((t) => t.username)}

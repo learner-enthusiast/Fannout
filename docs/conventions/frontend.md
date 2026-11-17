@@ -58,3 +58,15 @@ lists > 30 items are virtualized; no backdrop-blur; animations ≤ 150 ms.
   at selection time.
 - Manual steps (manual posts, "Set related video in YouTube Studio") are shown on the post with their own
   buttons; they never disable or delay the Post button.
+
+## Compose: master settings are derived, never copied
+
+- **Per-connection settings with a master (thumbnail, and any future "apply to all" field) are derived:
+  override ?? master ?? none, keyed by connection id, never copied.** The draft stores only the master
+  (`thumbnailMaster: mediaId[]`) and the overrides (`thumbnailOverrides: { [connectionId]: mediaId | "none" }`);
+  `resolveThumbnail` computes each card's value on every render, so changing the master updates every card
+  without an override, including accounts selected later.
+- With several masters each connection gets the one closest to its platform's recommended shape (ties →
+  first picked). Shape never rejects or crops: a far-off shape is an info note only.
+- A card's own pick is an override ("Custom" badge, "Use Master" clears it). Submit sends the resolved value
+  per connection.

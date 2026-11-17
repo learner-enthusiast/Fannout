@@ -1,5 +1,5 @@
 import { POST_TYPES, type PostType } from "@repo/ai/prompts/length-targets-api";
-import { readComposeMeta, type ComposeFieldMeta } from "@repo/providers";
+import { IMAGE_FORMATS, readComposeMeta, type ComposeFieldMeta } from "@repo/providers";
 import { z } from "zod";
 import { ANALYTICS_CAPABILITIES } from "../analytics/capabilities";
 import { AnalyticsCapabilitySchema } from "../analytics/model";
@@ -9,6 +9,15 @@ import { PLATFORMS, type Platform } from "./platforms";
 const AiBandSchema = z.object({
   min: z.number().int().describe("Lower end of the length AI aims for."),
   max: z.number().int().describe("Upper end of the length AI aims for."),
+});
+
+const ImageSlotRuleSchema = z.object({
+  acceptedImageFormats: z.array(z.enum(IMAGE_FORMATS)).describe("Image formats the platform API takes for this slot. Other formats are converted by Fannout (to JPEG) before publishing, keeping the exact width, height and aspect ratio."),
+  maxImageBytes: z.number().int().describe("Largest image in bytes for this slot. Larger images are re-encoded (and, as a last resort, scaled down proportionally) to fit; never cropped or padded."),
+  aspectRatio: z.object({
+    min: z.number().describe("Smallest width / height allowed (e.g. 0.8 = 4:5)."),
+    max: z.number().describe("Largest width / height allowed (e.g. 1.91 = 1.91:1)."),
+  }).optional().describe("Shapes the platform accepts. Fannout never reshapes images: one outside this range is a validation error."),
 });
 
 export const ComposeFieldSchema = z.object({
@@ -68,6 +77,11 @@ export const PlatformCapabilitiesSchema = z.object({
     recommended: z.string().describe("Recommended size, e.g. 1280×720 (16:9)."),
     note: z.string().optional().describe("Platform caveat (e.g. YouTube needs a verified channel)."),
   }).optional().describe("Custom thumbnail constraints checked by POST /posts/validate; absent when no thumbnail is supported or the platform documents none."),
+  imageFormats: z.object({
+    image: ImageSlotRuleSchema.optional().describe("A single-photo post."),
+    carouselImage: ImageSlotRuleSchema.optional().describe("Each photo of a multi-photo post."),
+    cover: ImageSlotRuleSchema.optional().describe("The custom video thumbnail / Reels cover (thumbnailByConnection)."),
+  }).optional().describe("Image format needs per slot; absent slot = sent as uploaded. Images are converted automatically, keeping their original form factor."),
   perImageAltTextMax: z.number().int().optional().describe("Photo posts accept input.altTexts (media ID → alt text) up to this many characters each; absent = no per-image alt text."),
   supportsDelete: z.boolean().describe("Fannout can delete published posts here."),
   deleteNote: z.string().describe("Platform note about deletes."),
@@ -82,7 +96,7 @@ export const PlatformCapabilitiesSchema = z.object({
     maxImageBytes: z.number().optional().describe("Largest image in bytes."),
     shortMaxSeconds: z.number().optional().describe("Vertical videos up to this length publish as Shorts."),
     videoMimeTypes: z.array(z.string()).optional().describe("Accepted video MIME types (e.g. Instagram: video/mp4, video/quicktime)."),
-    imageMimeTypes: z.array(z.string()).optional().describe("Accepted image MIME types for photos and cover images (Instagram: image/jpeg only)."),
+    imageMimeTypes: z.array(z.string()).optional().describe("Image MIME types the platform API takes for photos and cover images. Fannout converts other images automatically (see imageFormats), so any image can be uploaded."),
     requiresPublicUrl: z.boolean().optional().describe("The platform fetches media from a public URL."),
     billed: z.boolean().optional().describe("The platform bills API usage for posting."),
   }).describe("Media limits checked by POST /posts/validate."),

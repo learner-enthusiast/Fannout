@@ -459,6 +459,11 @@ export const X_COMPOSE: ComposeCapabilities = {
   tagging: { image: "list", video: "list", max: X_TAG_MAX, needsUserId: true },
   collaborators: null,
   supportsThumbnail: false,
+  // Image types the X publisher uploads (XMediaTypeSchema), 5 MB like mediaRules.maxImageBytes.
+  imageFormats: {
+    image: { acceptedImageFormats: ["jpeg", "png", "webp", "gif"], maxImageBytes: 5 * 1024 * 1024 },
+    carouselImage: { acceptedImageFormats: ["jpeg", "png", "webp", "gif"], maxImageBytes: 5 * 1024 * 1024 },
+  },
   mediaRules: { maxVideoBytes: 512 * 1024 * 1024, maxVideoSeconds: 140, maxImageBytes: 5 * 1024 * 1024, billed: true },
   // DELETE /2/tweets/{id} (tweet.write) — https://docs.x.com/x-api/posts/delete-post
   supportsDelete: true,

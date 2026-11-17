@@ -1,8 +1,9 @@
 import { and, asc, count, db, eq, inArray, media, mediaFolderItems, mediaFolders, postMedia, posts } from "@repo/database";
 import { errors } from "@repo/errors";
-import { abortMultipartUpload, deleteObject } from "@repo/s3";
+import { abortMultipartUpload, deleteObject, deleteObjects } from "@repo/s3";
 import { z } from "zod";
 import { invalidate } from "../cache";
+import { derivativeKeys } from "./derivatives";
 import { getMediaById } from "./index";
 import {
   DeleteMediaInputSchema,
@@ -90,6 +91,9 @@ export async function deleteMediaChecked(
   await deleteObject(row.s3Key, { bucket: row.s3Bucket }).catch(() => undefined);
   const thumbnailKey = row.metadata?.thumbnailKey;
   if (thumbnailKey) await deleteObject(thumbnailKey, { bucket: row.s3Bucket }).catch(() => undefined);
+  // Format-converted copies (ensureFormat) go with their original.
+  const derived = derivativeKeys(row);
+  if (derived.length) await deleteObjects(derived, { bucket: row.s3Bucket }).catch(() => undefined);
   // Row deleted: folder links cascade, and posts that listed this media change too.
   await invalidate(row.userId, "media", "posts");
   return { deleted: true, alreadyGone: false };

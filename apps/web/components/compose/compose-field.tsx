@@ -23,7 +23,7 @@ import {
     TooltipContent,
     TooltipTrigger,
 } from '~/components/ui/tooltip'
-import { xWeight, type ComposeField } from '~/lib/compose'
+import { tagsLength, xWeight, type ComposeField } from '~/lib/compose'
 import { MentionTextarea, type MentionRange } from './mention-editor'
 import { RelatedVideoPicker, type RelatedVideo } from './related-video-picker'
 import { trpc } from '~/trpc/client'
@@ -180,7 +180,14 @@ export function ComposeFieldControl({
                   band,
               }
             : field.kind === 'tags' && field.maxLength
-              ? { value: Array.isArray(value) ? value.join(',') : '', limit: field.maxLength, band }
+              ? {
+                    // Counted as YouTube does: a tag with a space counts 2 more (quotes).
+                    value: Array.isArray(value) ? value.join(',') : '',
+                    limit: field.maxLength,
+                    mode: 'weighted' as const,
+                    weigh: () => tagsLength(Array.isArray(value) ? (value as string[]) : []),
+                    band,
+                }
               : undefined
 
     if (field.kind === 'toggle') {
@@ -213,6 +220,7 @@ export function ComposeFieldControl({
                                     onChange={(next) => onChange(next || undefined)}
                                     mentions={mentions}
                                     onMentionsChange={onMentionsChange}
+                                    socialConnectionId={socialConnectionId}
                                 />
                             )
                         }

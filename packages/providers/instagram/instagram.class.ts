@@ -11,6 +11,9 @@ import {
   CreateImageContainerInputSchema,
   CreateReelContainerInputSchema,
   InstagramAccountSchema,
+  InstagramBusinessDiscoverySchema,
+  InstagramUsernameSchema,
+  type InstagramBusinessDiscovery,
   InstagramContainerStatusSchema,
   InstagramIdSchema,
   InstagramInsightsResponseSchema,
@@ -91,6 +94,20 @@ export class InstagramProvider extends BaseProvider<InstagramProviderConfig> {
     );
   }
 
+  /**
+   * Exact-username lookup of another account via Business Discovery on our own IG user. Only finds
+   * Business/Creator accounts; personal accounts, missing permissions and rate limits throw (callers fall back).
+   */
+  async getBusinessDiscovery(username: string): Promise<InstagramBusinessDiscovery | null> {
+    const name = this.validate(InstagramUsernameSchema, username, "getBusinessDiscovery.username");
+    const res = await this.get(
+      E.account(this.igUserId),
+      { fields: [`business_discovery.username(${name}){username,name,profile_picture_url}`] },
+      InstagramBusinessDiscoverySchema,
+    );
+    return res.business_discovery ?? null;
+  }
+
   async getAuthenticatedAccount(): Promise<ProviderAccount> {
     const me = await this.getProfile();
     return {
@@ -139,7 +156,7 @@ export class InstagramProvider extends BaseProvider<InstagramProviderConfig> {
   /** GET /{container-id}?fields=status_code. */
   async getContainerStatus(containerId: string): Promise<InstagramContainerStatus> {
     const id = this.validate(InstagramIdSchema, containerId, "getContainerStatus");
-    return this.get(E.node(id), { fields: ["status_code"] }, InstagramContainerStatusSchema);
+    return this.get(E.node(id), { fields: ["status_code", "status"] }, InstagramContainerStatusSchema);
   }
 
   /** POST /{ig-id}/media_publish { creation_id } → { id }. Not idempotent: check the container status first. */

@@ -10,7 +10,62 @@ export type MediaView = RouterOutputs['media']['list']['items'][number]
 export type MediaLite = Pick<
     MediaView,
     'id' | 'name' | 'type' | 'status' | 'url' | 'orientation' | 'durationSeconds' | 'width' | 'height'
-> & { thumbUrl?: string | null }
+> & { thumbUrl?: string | null; mimeType?: string }
+
+const FORMAT_BY_EXT: Record<string, string> = {
+    jpg: 'jpeg',
+    jpeg: 'jpeg',
+    png: 'png',
+    webp: 'webp',
+    gif: 'gif',
+    heic: 'heic',
+    heif: 'heic',
+    avif: 'avif',
+    bmp: 'bmp',
+    tif: 'tiff',
+    tiff: 'tiff',
+}
+const FORMAT_LABEL: Record<string, string> = { jpeg: 'JPEG', png: 'PNG', webp: 'WebP', gif: 'GIF', heic: 'HEIC', avif: 'AVIF', bmp: 'BMP', tiff: 'TIFF' }
+
+/** Image format name (as in capabilities.imageFormats) from the MIME type, else the file extension. */
+function imageFormatOf(media: MediaLite): string | null {
+    const sub = media.mimeType?.toLowerCase().replace(/^image\//, '')
+    if (sub) return FORMAT_BY_EXT[sub === 'pjpeg' ? 'jpeg' : sub === 'x-ms-bmp' ? 'bmp' : sub] ?? null
+    return FORMAT_BY_EXT[media.name.split('.').pop()?.toLowerCase() ?? ''] ?? null
+}
+
+/**
+ * "PNG will be converted to JPEG (same size and shape)" when a picked image isn't in a format the
+ * platform takes for its slot (capabilities.imageFormats). Info only: Fannout converts at publish time.
+ */
+export function conversionNote(
+    capabilities: Capabilities,
+    mediaType: ComposeMediaType,
+    photos: MediaLite[],
+    thumbnail: MediaLite | null
+): string | null {
+    const rules = capabilities.imageFormats
+    if (!rules) return null
+    const items =
+        mediaType === 'photos'
+            ? photos.map((photo) => ({ media: photo, rule: rules[photos.length > 1 ? 'carouselImage' : 'image'] }))
+            : thumbnail
+              ? [{ media: thumbnail, rule: rules.cover }]
+              : []
+    const from = new Set<string>()
+    let to: string | null = null
+    for (const { media, rule } of items) {
+        const format = imageFormatOf(media)
+        if (!rule || !format || (rule.acceptedImageFormats as string[]).includes(format)) continue
+        if (!(rule.acceptedImageFormats as string[]).includes('jpeg')) continue
+        from.add(FORMAT_LABEL[format] ?? format.toUpperCase())
+        to = 'JPEG'
+    }
+    if (!to || from.size === 0) return null
+    const names = [...from]
+    const list = names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}` : names[0]
+    return `${list} will be converted to ${to} (same size and shape)`
+}
 
 /**
  * Per-platform media checks the server can't make yet: a file that is still
@@ -50,10 +105,13 @@ export type ComposeDraft = {
     photoIds: string[]
     folderId: string | null
     inputs: Record<string, Record<string, unknown>>
-    /** Per-account thumbnail; wins over the pool. Absent/null = auto-assigned from the pool. */
-    thumbnails: Record<string, string | null>
-    /** Picked thumbnails; each account gets the first one matching its shape (landscape/portrait). */
-    thumbnailPool: string[]
+    /**
+     * Per-connection thumbnail override, keyed by connection id: a media id, or "none" (no thumbnail).
+     * Absent = follow the master. The effective thumbnail is derived (resolveThumbnail), never copied.
+     */
+    thumbnailOverrides: Record<string, ThumbnailOverride>
+    /** Master thumbnails (one or more). Cards without an override follow them. */
+    thumbnailMaster: string[]
     /** Photos mode: per-account subset/order. */
     photoOverrides: Record<string, string[]>
     /** One key per submit attempt; a retried click re-uses it (no duplicates). */
@@ -83,8 +141,8 @@ export const emptyDraft = (): ComposeDraft => ({
     photoIds: [],
     folderId: null,
     inputs: {},
-    thumbnails: {},
-    thumbnailPool: [],
+    thumbnailOverrides: {},
+    thumbnailMaster: [],
     photoOverrides: {},
     idempotencyKey: crypto.randomUUID(),
     aiJsonId: null,
@@ -104,9 +162,19 @@ export function loadDraft(): ComposeDraft | null {
     try {
         const raw = localStorage.getItem(DRAFT_KEY)
         if (!raw) return null
-        const { thumbnailAll, ...parsed } = JSON.parse(raw) as Partial<ComposeDraft> & { thumbnailAll?: string | null }
-        // Drafts saved before the thumbnail pool had one shared thumbnail.
-        return { ...emptyDraft(), ...parsed, thumbnailPool: parsed.thumbnailPool ?? (thumbnailAll ? [thumbnailAll] : []) }
+        const { thumbnailAll, thumbnailPool, thumbnails, ...parsed } = JSON.parse(raw) as Partial<ComposeDraft> & {
+            thumbnailAll?: string | null
+            thumbnailPool?: string[]
+            thumbnails?: Record<string, string | null>
+        }
+        // Older drafts: one shared thumbnail (thumbnailAll), then a pool + per-account picks (null = auto).
+        const legacyOverrides = Object.fromEntries(Object.entries(thumbnails ?? {}).filter((entry): entry is [string, string] => Boolean(entry[1])))
+        return {
+            ...emptyDraft(),
+            ...parsed,
+            thumbnailMaster: parsed.thumbnailMaster ?? thumbnailPool ?? (thumbnailAll ? [thumbnailAll] : []),
+            thumbnailOverrides: parsed.thumbnailOverrides ?? legacyOverrides,
+        }
     } catch {
         return null
     }
@@ -133,6 +201,10 @@ export const platformOf = (provider: string): Platform | null => {
     const value = provider.toLowerCase()
     return ['youtube', 'x', 'linkedin', 'threads', 'facebook', 'instagram'].includes(value) ? (value as Platform) : null
 }
+
+/** YouTube tags length as YouTube counts it (same as the server's youtubeTagsLength): commas between, +2 per tag with a space. */
+export const tagsLength = (tags: string[]): number =>
+    tags.reduce((sum, tag) => sum + tag.length + (/\s/.test(tag) ? 2 : 0), 0) + Math.max(0, tags.length - 1)
 
 /** X weighted length (official twitter-text, same as the server). */
 export const xWeight = (text: string): number => twitterText.parseTweet(text).weightedLength
@@ -194,8 +266,70 @@ export function postTypeOf(
 export const bandOf = (field: ComposeField, postType: PostType) =>
     field.aiBands?.[postType] ?? (postType === 'short' ? field.aiBands?.video : postType === 'video' ? field.aiBands?.short : undefined)
 
-/** Landscape images go to landscape platforms (YouTube), portrait ones to portrait covers (Instagram). */
-export function autoThumbnail(pool: MediaLite[], aspect: 'landscape' | 'portrait' | undefined): MediaLite | null {
-    if (!aspect) return pool[0] ?? null
-    return pool.find((m) => m.orientation === aspect) ?? pool.find((m) => !m.orientation || m.orientation === 'square') ?? null
+// ---- Thumbnails: master + per-connection override, always derived -------------------------------
+
+export const THUMBNAIL_NONE = 'none'
+/** A media id, or "none" = this connection posts without a custom thumbnail. */
+export type ThumbnailOverride = string
+
+/** The platform's recommended width / height, from capabilities ("1280×720 (16:9)" → 16/9; else its aspect). */
+export function recommendedRatio(capabilities: Capabilities): { ratio: number; label: string } | null {
+    const rules = capabilities.thumbnailRules
+    if (!rules) return null
+    const match = /\((\d+(?:\.\d+)?):(\d+(?:\.\d+)?)\)/.exec(rules.recommended)
+    if (match) return { ratio: Number(match[1]) / Number(match[2]), label: `${match[1]}:${match[2]}` }
+    return rules.aspect === 'landscape' ? { ratio: 16 / 9, label: '16:9' } : { ratio: 9 / 16, label: '9:16' }
+}
+
+/** width / height when known; square counts as 1. */
+function ratioOf(media: MediaLite | undefined): number | null {
+    if (media?.width && media.height) return media.width / media.height
+    return media?.orientation === 'square' ? 1 : null
+}
+
+export type ResolvedThumbnail = {
+    /** Effective media id, or null = platform default. */
+    id: string | null
+    /** custom = the card's own override ("none" included); master = follows the master; none = nothing to follow. */
+    source: 'custom' | 'master' | 'none'
+}
+
+/**
+ * Effective thumbnail for one connection, derived on every render:
+ * 1. its override ("none" = no thumbnail); 2. the only master; 3. the master closest to the platform's
+ * recommended shape (ties → first picked); 4. none. Never filtered out by shape: thumbnails are sent as-is.
+ */
+export function resolveThumbnail(
+    capabilities: Capabilities | undefined,
+    master: string[],
+    override: ThumbnailOverride | undefined,
+    media: Record<string, MediaLite | undefined>
+): ResolvedThumbnail {
+    if (!capabilities?.supportsThumbnail) return { id: null, source: 'none' }
+    if (override) return { id: override === THUMBNAIL_NONE ? null : override, source: 'custom' }
+    if (master.length === 0) return { id: null, source: 'none' }
+    if (master.length === 1) return { id: master[0]!, source: 'master' }
+    const target = recommendedRatio(capabilities)
+    if (!target) return { id: master[0]!, source: 'master' }
+    let best = master[0]!
+    let bestDistance = Infinity
+    for (const id of master) {
+        const ratio = ratioOf(media[id])
+        const distance = ratio ? Math.abs(Math.log(ratio / target.ratio)) : Infinity
+        if (distance < bestDistance) {
+            best = id
+            bestDistance = distance
+        }
+    }
+    return { id: best, source: 'master' }
+}
+
+/** Info only (never an error, never cropped): "YouTube shows 16:9 best; your image will be shown as-is". */
+export function thumbnailShapeNote(capabilities: Capabilities, thumbnail: MediaLite | null): string | null {
+    const target = recommendedRatio(capabilities)
+    const ratio = ratioOf(thumbnail ?? undefined)
+    if (!target || !ratio) return null
+    // Far = more than 1.5× off (e.g. square vs 16:9, landscape vs 9:16).
+    if (Math.abs(Math.log(ratio / target.ratio)) <= Math.log(1.5)) return null
+    return `${capabilities.label} shows ${target.label} best; your image will be shown as-is`
 }

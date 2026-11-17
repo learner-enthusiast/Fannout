@@ -20,6 +20,7 @@ import {
   type PostType,
   type ResolvedTarget,
 } from "@repo/ai";
+import { YOUTUBE_TAGS_MAX, youtubeTagsLength } from "@repo/providers/youtube";
 import type { z } from "zod";
 import type { Platform } from "../publishing/platforms";
 import { chapterBlock, chaptersFromCues, stripChapterLines, validateChapters, type Chapter } from "./chapters";
@@ -227,12 +228,14 @@ function build(target: WriterTarget, ctx: WriterContext, raw: unknown): Draft {
     if (wants("tags")) {
       const seen = new Set<string>();
       const list = o.tags
-        .map((t) => oneLine(noAngles(t.replace(/^#+/, ""))).slice(0, 100))
+        // A comma would split one tag into two on YouTube.
+        .map((t) => oneLine(noAngles(t.replace(/^#+/, "").replace(/,/g, " "))).replace(/\s+/g, " ").trim().slice(0, 100))
         .filter((t) => t && !seen.has(t.toLowerCase()) && seen.add(t.toLowerCase()));
       const band = aiBandFor(platform, postType, "tags");
-      const joined = list.join(",").length;
+      // Counted as YouTube does (multi-word tags +2 for quotes), or YouTube rejects them as invalid keywords.
+      const joined = youtubeTagsLength(list);
       if (band && joined < band.min) errors.push(`tags total ${num(joined)} chars joined, target ${num(band.min)}–${num(band.max)}: add more search phrases people would type`);
-      while (list.length && list.join(",").length > (band?.limit ?? 500)) list.pop();
+      while (list.length && youtubeTagsLength(list) > Math.min(band?.limit ?? YOUTUBE_TAGS_MAX, YOUTUBE_TAGS_MAX)) list.pop();
       values.tags = list.slice(0, 50);
     }
   } else if (platform === "linkedin") {

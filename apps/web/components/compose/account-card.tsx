@@ -25,12 +25,14 @@ import { Input } from '~/components/ui/input'
 import {
     AI_SOURCE_LABEL,
     bandOf,
+    conversionNote,
     downloadBase64,
     isEmpty,
     isManualPost,
     postTypeOf,
     tagModeOf,
     textFieldOf,
+    thumbnailShapeNote,
     type AiSource,
     type Capabilities,
     type ComposeMediaType,
@@ -87,8 +89,9 @@ function AccountCardBody({
     copySources,
     onChange,
     onPickThumbnail,
-    thumbnailInherited = false,
-    onResetThumbnail,
+    thumbnailSource = 'none',
+    onUseMaster,
+    onNoThumbnail,
     onOverride,
     onCopyFrom,
     aiFor,
@@ -113,10 +116,12 @@ function AccountCardBody({
     copySources: { id: string; name: string }[]
     onChange: (field: string, value: unknown) => void
     onPickThumbnail: () => void
-    /** Showing the shared "all accounts" thumbnail (no pick of its own). */
-    thumbnailInherited?: boolean
-    /** Drop this card's own thumbnail and go back to the shared one / platform default. */
-    onResetThumbnail?: () => void
+    /** Where the effective thumbnail comes from (derived: override ?? master ?? none). */
+    thumbnailSource?: 'custom' | 'master' | 'none'
+    /** Clear this card's override so it follows the master again. */
+    onUseMaster?: () => void
+    /** Override with "no thumbnail" (platform default). */
+    onNoThumbnail?: () => void
     onOverride: (ids: string[] | undefined) => void
     onCopyFrom: (sourceId: string) => void
     /** AI state for a field (undefined = no AI for this card). */
@@ -158,6 +163,9 @@ function AccountCardBody({
     const manual = isManualPost(capabilities, mediaType, selected.length)
     const photoLimit = manual ? capabilities.carouselMax : capabilities.maxPhotos
     const tooMany = mediaType === 'photos' && selected.length > photoLimit
+    // Format conversion is automatic (never a reshape): a note, not an issue.
+    const shapeNote = mediaType === 'video' && capabilities.supportsThumbnail ? thumbnailShapeNote(capabilities, thumbnail) : null
+    const conversion = manual ? null : conversionNote(capabilities, mediaType, mediaType === 'photos' ? slides : [], thumbnail)
 
     // ---- Tags (from capabilities.tagging; separate from @mentions in the text)
     const tagMode = tagModeOf(capabilities, mediaType)
@@ -331,6 +339,12 @@ function AccountCardBody({
                         ) : null}
                     </Alert>
                 ))}
+                {conversion ? (
+                    <Alert variant="info">
+                        <InfoIcon aria-hidden />
+                        <AlertDescription>{conversion}</AlertDescription>
+                    </Alert>
+                ) : null}
                 {isShort ? (
                     <Alert variant="info">
                         <InfoIcon aria-hidden />
@@ -340,28 +354,46 @@ function AccountCardBody({
                 ) : null}
 
                 {mediaType === 'video' && capabilities.supportsThumbnail ? (
-                    <div className="flex items-center gap-4">
-                        <span className="relative w-24 shrink-0 overflow-hidden rounded-control border border-border">
-                            <MediaPreview type="image" url={thumbnail?.url ?? null} thumbUrl={thumbnail?.thumbUrl} alt={thumbnail?.name ?? 'No thumbnail'} />
-                            {thumbnail ? <UploadRing mediaId={thumbnail.id} fallbackStatus={thumbnail.status} /> : null}
-                        </span>
-                        <div className="flex min-w-0 flex-1 flex-col gap-1">
-                            <span className="text-label text-foreground">Thumbnail</span>
-                            <span className="truncate text-meta">
-                                {thumbnail ? thumbnail.name : 'Platform default (auto-generated)'}
-                                {thumbnailInherited ? ' · auto-assigned' : ''}
-                                {capabilities.thumbnailRules ? ` · ${capabilities.thumbnailRules.recommended}` : ''}
+                    <div className="flex flex-col gap-2">
+                        <div className="flex flex-wrap items-center gap-4">
+                            <span className="relative w-24 shrink-0 overflow-hidden rounded-control border border-border">
+                                <MediaPreview type="image" url={thumbnail?.url ?? null} thumbUrl={thumbnail?.thumbUrl} alt={thumbnail?.name ?? 'No thumbnail'} />
+                                {thumbnail ? <UploadRing mediaId={thumbnail.id} fallbackStatus={thumbnail.status} /> : null}
                             </span>
-                        </div>
-                        {onResetThumbnail ? (
-                            <Button variant="ghost" size="sm" onClick={onResetThumbnail}>
-                                Use Default
+                            <div className="flex min-w-0 flex-1 flex-col gap-1">
+                                <span className="flex items-center gap-2 text-label text-foreground">
+                                    Thumbnail
+                                    {thumbnailSource === 'custom' ? <Badge variant="outline">Custom</Badge> : null}
+                                </span>
+                                <span className="truncate text-meta">
+                                    {thumbnail ? thumbnail.name : 'Platform default (auto-generated)'}
+                                    {thumbnailSource === 'master' ? ' · from master' : ''}
+                                    {capabilities.thumbnailRules ? ` · ${capabilities.thumbnailRules.recommended}` : ''}
+                                </span>
+                            </div>
+                            {onUseMaster ? (
+                                <Button variant="ghost" size="sm" onClick={onUseMaster}>
+                                    Use Master
+                                </Button>
+                            ) : null}
+                            {onNoThumbnail ? (
+                                <Button variant="ghost" size="sm" onClick={onNoThumbnail}>
+                                    No Thumbnail
+                                </Button>
+                            ) : null}
+                            <Button variant="secondary" size="sm" leftIcon={<ImageIcon aria-hidden />} onClick={onPickThumbnail}>
+                                {thumbnailSource === 'custom' && thumbnail ? 'Change' : 'Pick Own'}
                             </Button>
+                        </div>
+                        {shapeNote ? (
+                            <Alert variant="info">
+                                <InfoIcon aria-hidden />
+                                <AlertDescription>{shapeNote}</AlertDescription>
+                            </Alert>
                         ) : null}
-                        <Button variant="secondary" size="sm" leftIcon={<ImageIcon aria-hidden />} onClick={onPickThumbnail}>
-                            {thumbnailInherited ? 'Pick Own' : thumbnail ? 'Change' : 'Pick Thumbnail'}
-                        </Button>
                     </div>
+                ) : mediaType === 'video' ? (
+                    <span className="text-meta">{`Thumbnail not supported on ${capabilities.label}`}</span>
                 ) : null}
 
                 {mediaType === 'photos' && photos.length > 1 ? (
@@ -398,6 +430,7 @@ function AccountCardBody({
                             <PositionedTagger
                                 key={photo.id}
                                 platform={tagPlatform}
+                                socialConnectionId={connection.id}
                                 photo={photo}
                                 title={slides.length > 1 ? `Slide ${index + 1}` : 'Photo'}
                                 max={capabilities.tagging.max}
@@ -416,6 +449,7 @@ function AccountCardBody({
                 {tagPlatform && tagMode === 'list' && !capabilities.tagging.needsUserId ? (
                     <TagList
                         platform={tagPlatform}
+                        socialConnectionId={connection.id}
                         label="Tag people"
                         helper={`Public accounts only, up to ${capabilities.tagging.max}.`}
                         usernames={userTags.map((tag) => tag.username)}
@@ -431,6 +465,7 @@ function AccountCardBody({
                 {tagPlatform && tagMode === 'list' && capabilities.tagging.needsUserId ? (
                     <TagList
                         platform={tagPlatform}
+                        socialConnectionId={connection.id}
                         label="Tag people"
                         helper={`Tags on the ${mediaType === 'video' ? 'video' : 'photos'}, up to ${capabilities.tagging.max}. Separate from @mentions in the text. People can turn tagging off; then the post goes out without tags.`}
                         usernames={taggedUsers.map((tag) => tag.username)}
@@ -462,6 +497,7 @@ function AccountCardBody({
                 {tagPlatform && capabilities.collaborators ? (
                     <TagList
                         platform={tagPlatform}
+                        socialConnectionId={connection.id}
                         label="Collaborators"
                         helper="Each collaborator must accept the invite in the app before the post shows on their profile."
                         usernames={collaborators}
@@ -555,13 +591,14 @@ function cardPropsEqual(prev: AccountCardProps, next: AccountCardProps) {
         prev.mediaType !== next.mediaType ||
         !Object.is(prev.video, next.video) ||
         !Object.is(prev.thumbnail, next.thumbnail) ||
-        prev.thumbnailInherited !== next.thumbnailInherited ||
+        prev.thumbnailSource !== next.thumbnailSource ||
         prev.instruction !== next.instruction ||
         prev.aiSource !== next.aiSource ||
         prev.aiBusy !== next.aiBusy ||
         Boolean(prev.onRegenerate) !== Boolean(next.onRegenerate) ||
         Boolean(prev.onRegenerateHook) !== Boolean(next.onRegenerateHook) ||
-        Boolean(prev.onResetThumbnail) !== Boolean(next.onResetThumbnail) ||
+        Boolean(prev.onUseMaster) !== Boolean(next.onUseMaster) ||
+        Boolean(prev.onNoThumbnail) !== Boolean(next.onNoThumbnail) ||
         Boolean(prev.onInstructionChange) !== Boolean(next.onInstructionChange) ||
         Boolean(prev.aiFor) !== Boolean(next.aiFor)
     ) {
@@ -602,7 +639,8 @@ export function AccountCard(props: AccountCardProps) {
             onPickThumbnail: () => latest.current.onPickThumbnail(),
             onOverride: (ids: string[] | undefined) => latest.current.onOverride(ids),
             onCopyFrom: (sourceId: string) => latest.current.onCopyFrom(sourceId),
-            onResetThumbnail: () => latest.current.onResetThumbnail?.(),
+            onUseMaster: () => latest.current.onUseMaster?.(),
+            onNoThumbnail: () => latest.current.onNoThumbnail?.(),
             onInstructionChange: (value: string) => latest.current.onInstructionChange?.(value),
             onRegenerate: () => latest.current.onRegenerate?.(),
             onRegenerateHook: () => latest.current.onRegenerateHook?.(),
@@ -624,7 +662,8 @@ export function AccountCard(props: AccountCardProps) {
             onPickThumbnail={stable.onPickThumbnail}
             onOverride={stable.onOverride}
             onCopyFrom={stable.onCopyFrom}
-            onResetThumbnail={props.onResetThumbnail ? stable.onResetThumbnail : undefined}
+            onUseMaster={props.onUseMaster ? stable.onUseMaster : undefined}
+            onNoThumbnail={props.onNoThumbnail ? stable.onNoThumbnail : undefined}
             onInstructionChange={props.onInstructionChange ? stable.onInstructionChange : undefined}
             onRegenerate={props.onRegenerate ? stable.onRegenerate : undefined}
             onRegenerateHook={props.onRegenerateHook ? stable.onRegenerateHook : undefined}
