@@ -56,6 +56,7 @@ import { trpc } from '~/trpc/client'
 import { InfiniteList } from '~/components/infinite-list'
 import { infiniteOptions, useInfiniteList } from '~/hooks/use-infinite-list'
 
+import { providers } from '~/components/connections/providers'
 import { AccountAvatar, AccountCard, accountName } from './account-card'
 import { InstructionControl } from './instruction-control'
 import { MediaPickerDialog, preloadMediaPicker } from './media-picker-lazy'
@@ -223,6 +224,9 @@ export function ComposeView() {
         .filter((c): c is Connection => Boolean(c))
     const targets = selected.filter((c) => supports(c) && c.status === 'connected')
     const excluded = selected.filter((c) => !supports(c))
+    /** Account whose details card is shown; falls back to the first target. */
+    const [activeCardId, setActiveCardId] = useState<string | null>(null)
+    const activeCard = targets.find((c) => c.id === activeCardId) ?? targets[0]
     const video = draft.videoId ? (cache[draft.videoId] ?? null) : null
     const thumbMaster = draft.thumbnailMaster.map((id) => cache[id]).filter((m): m is MediaLite => Boolean(m))
     /** Derived on every render, keyed by connection: override ?? master (closest shape) ?? none. Never copied. */
@@ -1011,7 +1015,34 @@ export function ComposeView() {
                     <h2 id="cards-heading" className="text-section-title text-foreground">
                         <span className="text-mono text-muted-foreground">4.</span> Post details
                     </h2>
-                    {targets.map((connection) => {
+                    <ToggleGroup
+                        aria-label="Account to edit"
+                        variant="outline"
+                        className="flex-wrap"
+                        value={activeCard ? [activeCard.id] : []}
+                        onValueChange={(value) => {
+                            const next = value[0]
+                            if (next) setActiveCardId(next)
+                        }}
+                    >
+                        {targets.map((connection) => {
+                            const provider = providers.find((p) => p.value === connection.provider)
+                            const Icon = provider?.icon
+                            const issueCount = allIssues.filter((i) => i.socialConnectionId === connection.id).length
+                            return (
+                                <ToggleGroupItem key={connection.id} value={connection.id} aria-label={`${accountName(connection)} (${capsFor(connection)?.label})`}>
+                                    {Icon ? <Icon aria-hidden /> : null}
+                                    {accountName(connection)}
+                                    {issueCount ? (
+                                        <Badge variant="destructive" aria-label={`${issueCount} issue${issueCount === 1 ? '' : 's'}`}>
+                                            {issueCount}
+                                        </Badge>
+                                    ) : null}
+                                </ToggleGroupItem>
+                            )
+                        })}
+                    </ToggleGroup>
+                    {targets.filter((c) => c.id === activeCard?.id).map((connection) => {
                         const caps = capsFor(connection)!
                         const textField = textFieldOf(caps, draft.mediaType)
                         const resolved = resolvedThumbnail(connection)
