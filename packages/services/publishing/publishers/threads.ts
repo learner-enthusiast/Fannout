@@ -49,7 +49,9 @@ async function ensureContainer(provider: ThreadsProvider, ctx: PublishContext): 
     const input = ctx.input as ThreadsComposeInput;
     const common = {
       ...(input.text?.trim() ? { text: input.text } : {}),
-      ...(input.reply_control ? { reply_control: input.reply_control } : {}),
+      // "everyone" is Threads' default; sending it explicitly gets rejected with
+      // "Application does not have permission for this action", so omit it.
+      ...(input.reply_control && input.reply_control !== "everyone" ? { reply_control: input.reply_control } : {}),
       ...(input.topic_tag ? { topic_tag: input.topic_tag } : {}),
       ...(input.is_spoiler_media ? { is_spoiler_media: true } : {}),
     };
