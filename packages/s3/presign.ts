@@ -1,6 +1,6 @@
 import { GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { defaultBucket, getPublicS3Client, getS3Client } from "./client";
+import { defaultBucket, getPublicS3Client, getS3Client, getUploadS3Client } from "./client";
 import { assertSafeKey } from "./keys";
 
 const MAX_EXPIRES_SECONDS = 7 * 24 * 60 * 60; // SigV4 limit
@@ -28,7 +28,7 @@ export async function getUploadUrl(
 ): Promise<{ url: string; method: "PUT"; headers: Record<string, string>; expiresAt: Date }> {
   const expiresIn = expiry(options.expiresIn, 15 * 60);
   const url = await getSignedUrl(
-    getPublicS3Client(),
+    getUploadS3Client(),
     new PutObjectCommand({
       Bucket: options.bucket ?? defaultBucket(),
       Key: assertSafeKey(key),

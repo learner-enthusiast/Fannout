@@ -319,7 +319,7 @@ export class ThreadsProvider extends BaseProvider<ThreadsProviderConfig> {
     const children: string[] = [];
     for (const item of items) {
       const { id } = await this.createCarouselItem(item);
-      if (item.media_type === "VIDEO") await this.waitForContainer(id, wait);
+      await this.waitForContainer(id, wait);
       children.push(id);
     }
     return this.createAndPublish({ ...rest, media_type: "CAROUSEL", children }, wait);

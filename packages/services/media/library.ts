@@ -1,11 +1,13 @@
 import { and, asc, count, db, eq, inArray, media, mediaFolderItems, mediaFolders, postMedia, posts } from "@repo/database";
 import { errors } from "@repo/errors";
 import { abortMultipartUpload, deleteObject, deleteObjects } from "@repo/s3";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { invalidate } from "../cache";
 import { derivativeKeys } from "./derivatives";
 import { getMediaById } from "./index";
 import {
+  BulkDeleteMediaInputSchema,
   DeleteMediaInputSchema,
   MediaRowSchema,
   RenameMediaInputSchema,
@@ -56,25 +58,63 @@ export async function getMediaDetail(userId: string, mediaId: string): Promise<M
 /** Post statuses that still need their media (published posts already copied it). */
 const PENDING_POST_STATUSES = ["draft", "queued", "scheduled", "publishing"];
 
+async function blockingPostsForMedia(mediaId: string) {
+  return db
+    .selectDistinct({ id: posts.id, name: posts.name, status: posts.status })
+    .from(postMedia)
+    .innerJoin(posts, eq(posts.id, postMedia.postId))
+    .where(and(eq(postMedia.mediaId, mediaId), inArray(posts.status, PENDING_POST_STATUSES)))
+    .limit(10);
+}
+
+/** Plan a single or bulk library delete (one Inngest job). Throws MEDIA_IN_USE when any item is blocked. */
+export async function planMediaDeleteJob(
+  userId: string,
+  input: z.input<typeof BulkDeleteMediaInputSchema>,
+): Promise<DeleteMediaResult & { mediaIdsToQueue: string[] }> {
+  const { mediaIds } = BulkDeleteMediaInputSchema.parse(input);
+  const unique = [...new Set(mediaIds)];
+  const blocked: { mediaId: string; name: string; posts: { id: string; name: string; status: string }[] }[] = [];
+  const toQueue: string[] = [];
+
+  for (const mediaId of unique) {
+    const row = await getMediaById(userId, mediaId);
+    if (!row) continue;
+    const blocking = await blockingPostsForMedia(row.id);
+    if (blocking.length) blocked.push({ mediaId: row.id, name: row.name, posts: blocking });
+    else toQueue.push(row.id);
+  }
+
+  if (blocked.length) {
+    const names = blocked.map((b) => `“${b.name}”`).join(", ");
+    return errors.mediaInUse(`Can't delete ${names}: still used by unpublished posts.`, { items: blocked });
+  }
+
+  const jobId = randomUUID();
+  return { accepted: true, jobId, queued: toQueue.length, mediaIdsToQueue: toQueue };
+}
+
+export async function planMediaDelete(
+  userId: string,
+  input: z.input<typeof DeleteMediaInputSchema>,
+): Promise<DeleteMediaResult & { mediaIdsToQueue: string[] }> {
+  const { mediaId } = DeleteMediaInputSchema.parse(input);
+  return planMediaDeleteJob(userId, { mediaIds: [mediaId] });
+}
+
 /**
  * Deletes a media item: folder links (cascade), the stored file, the row.
- * Idempotent — already gone (or not yours) returns success. Media still used
- * by unpublished posts is rejected with MEDIA_IN_USE + the posts.
+ * Idempotent — already gone (or not yours) is a no-op. Used by the Inngest worker only.
  */
 export async function deleteMediaChecked(
   userId: string,
   input: z.input<typeof DeleteMediaInputSchema>,
-): Promise<DeleteMediaResult> {
+): Promise<{ deleted: boolean; alreadyGone: boolean }> {
   const { mediaId } = DeleteMediaInputSchema.parse(input);
   const row = await getMediaById(userId, mediaId);
   if (!row) return { deleted: true, alreadyGone: true };
 
-  const blocking = await db
-    .selectDistinct({ id: posts.id, name: posts.name, status: posts.status })
-    .from(postMedia)
-    .innerJoin(posts, eq(posts.id, postMedia.postId))
-    .where(and(eq(postMedia.mediaId, row.id), inArray(posts.status, PENDING_POST_STATUSES)))
-    .limit(10);
+  const blocking = await blockingPostsForMedia(row.id);
   if (blocking.length) {
     return errors.mediaInUse(
       `“${row.name}” is used by unpublished posts: ${blocking.map((p) => p.name).join(", ")}`,
@@ -97,4 +137,26 @@ export async function deleteMediaChecked(
   // Row deleted: folder links cascade, and posts that listed this media change too.
   await invalidate(row.userId, "media", "posts");
   return { deleted: true, alreadyGone: false };
+}
+
+export type MediaDeleteJobResult = {
+  total: number;
+  deleted: number;
+  failures: { mediaId: string; message: string }[];
+};
+
+/** Inngest worker: delete each ID; collect failures instead of failing the whole step. */
+export async function runMediaDeleteJob(userId: string, mediaIds: string[]): Promise<MediaDeleteJobResult> {
+  const failures: MediaDeleteJobResult["failures"] = [];
+  let deleted = 0;
+  for (const mediaId of mediaIds) {
+    try {
+      const result = await deleteMediaChecked(userId, { mediaId });
+      if (!result.alreadyGone) deleted += 1;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Delete failed";
+      failures.push({ mediaId, message: message.slice(0, 300) });
+    }
+  }
+  return { total: mediaIds.length, deleted, failures };
 }

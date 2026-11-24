@@ -4,7 +4,7 @@ Fannout lets a person prepare media once and fan it out to connected social plat
 Use this guide when acting through the HTTP API with a scoped personal API key.
 This document is the contract. Follow it exactly.
 
-Generated from code at e75662a on 2026-11-17. Do not edit generated sections by hand.
+Generated from code at 0d2bedd on 2026-11-18. Do not edit generated sections by hand.
 
 ## Authentication
 
@@ -20,7 +20,7 @@ Send `Authorization: Bearer fn_live_…`. Create keys in **Settings → API keys
 | `posts:write` | DELETE /mentions/{id}<br>PATCH /mentions/{id}<br>PATCH /posts/{postId}<br>POST /mentions<br>POST /mentions/x/resolve<br>POST /notifications/read<br>POST /notifications/read-all<br>POST /posts/batches<br>POST /posts/validate<br>POST /posts/{postId}/cancel-schedule<br>POST /posts/{postId}/manual-posted<br>POST /posts/{postId}/publish-now<br>POST /posts/{postId}/repost<br>POST /posts/{postId}/reschedule<br>POST /posts/{postId}/retry<br>POST /posts/{postId}/tasks/related-video/done |
 | `posts:delete` | DELETE /posts/{postId}<br>POST /posts/batches/{batchId}/delete |
 | `media:read` | GET /folders<br>GET /folders/{folderId}<br>GET /folders/{folderId}/items<br>GET /media<br>GET /media/{mediaId}<br>GET /search<br>POST /media/zip |
-| `media:write` | DELETE /folders/{folderId}<br>DELETE /folders/{folderId}/items/{mediaId}<br>DELETE /media/{mediaId}<br>PATCH /folders/{folderId}<br>PATCH /folders/{folderId}/items/{mediaId}<br>PATCH /media/{mediaId}<br>POST /folders<br>POST /folders/from-suggestion<br>POST /folders/{folderId}/items<br>POST /media/uploads<br>POST /media/{mediaId}/complete<br>POST /media/{mediaId}/fail<br>POST /media/{mediaId}/parts<br>PUT /folders/{folderId}/order |
+| `media:write` | DELETE /folders/{folderId}<br>DELETE /folders/{folderId}/items/{mediaId}<br>DELETE /media/{mediaId}<br>PATCH /folders/{folderId}<br>PATCH /folders/{folderId}/items/{mediaId}<br>PATCH /media/{mediaId}<br>POST /folders<br>POST /folders/from-suggestion<br>POST /folders/{folderId}/items<br>POST /media/bulk-delete<br>POST /media/uploads<br>POST /media/{mediaId}/complete<br>POST /media/{mediaId}/fail<br>POST /media/{mediaId}/parts<br>PUT /folders/{folderId}/order |
 | `connections:read` | GET /platforms/youtube/{socialConnectionId}/categories<br>GET /platforms/youtube/{socialConnectionId}/playlists<br>GET /platforms/youtube/{socialConnectionId}/uploads<br>GET /platforms/youtube/{socialConnectionId}/video<br>GET /social-connections<br>GET /social-connections/providers |
 | `ai:generate` | GET /ai/generations/{generationId}<br>GET /ai/instruction-presets<br>POST /ai/generations<br>POST /ai/instruction-presets |
 
@@ -266,7 +266,7 @@ Fields for `targets[].input` when the account is YouTube:
 | title | string | required | — | min length 1; max length 100 | Video title shown on YouTube (1–100 characters, no < or >). |
 | description | string | optional | — | max length 5000 | Video description (max 5,000 UTF-8 bytes, no < or >). |
 | privacyStatus | public \| unlisted \| private | required | — | enum: public, unlisted, private | Who can watch: public, unlisted or private. |
-| madeForKids | boolean | required | — | — | Required: whether the video is made for kids (COPPA). There is no default. |
+| madeForKids | boolean | required | — | — | Required: whether the video is made for kids (COPPA). Default false (not made for kids). |
 | categoryId | string | optional | — | pattern ^\d+$ | YouTube category ID, from GET /platforms/youtube/{socialConnectionId}/categories. |
 | tags | string[] | optional | — | max length 500; max items 50 | Keywords (each 1–100 chars, no <, > or commas, at most 50 tags). Total at most 500 characters as YouTube counts it: tags joined by commas, and a tag containing a space counts 2 more (YouTube wraps it in quotes). |
 | playlistId | string | optional | — | min length 1 | Playlist ID to add the video to, from GET /platforms/youtube/{socialConnectionId}/playlists. |
@@ -1689,6 +1689,51 @@ curl -X GET "${API_PUBLIC_URL}/api/health" \
 }
 ```
 
+### Media · Bulk Delete
+
+**POST /media/bulk-delete** — Queue delete for many media items in one job
+
+- Required scope: `media:write`
+- Rate limit: none beyond the API-key `api` bucket
+- Possible errors: `UNAUTHORIZED`, `FORBIDDEN`, `TOO_MANY_REQUESTS`, `VALIDATION`, `BAD_REQUEST`, `NOT_FOUND`, `CONFLICT`, `INTERNAL`
+
+#### Request
+
+| Field | Type | Required | Default | Constraints | Description |
+| --- | --- | --- | --- | --- | --- |
+| mediaIds | string (uuid)[] | required | — | min items 1; max items 100 | Media IDs to delete in one background job. |
+
+#### Example request
+
+```bash
+curl -X POST "${API_PUBLIC_URL}/api/media/bulk-delete" \
+  -H "Authorization: Bearer $FANNOUT_API_KEY" \
+  -H 'Content-Type: application/json' \
+  --data '{
+  "mediaIds": [
+    "00000000-0000-4000-8000-000000000000"
+  ]
+}'
+```
+
+#### Response
+
+| Field | Type | Default | Constraints | Description |
+| --- | --- | --- | --- | --- |
+| accepted | true | — | — | Delete job was accepted. |
+| jobId | string (uuid) | — | format uuid | Background job ID. |
+| queued | integer | — | min 0; max 9007199254740991 | Items queued (0 when every ID was already gone). |
+
+#### Example response
+
+```json
+{
+  "accepted": true,
+  "jobId": "00000000-0000-4000-8000-000000000000",
+  "queued": 0
+}
+```
+
 ### Media · Complete Upload
 
 **POST /media/{mediaId}/complete** — Finish a multipart upload with the part ETags
@@ -1852,7 +1897,7 @@ curl -X POST "${API_PUBLIC_URL}/api/media/uploads" \
 
 ### Media · Delete
 
-**DELETE /media/{mediaId}** — Delete a media item (idempotent)
+**DELETE /media/{mediaId}** — Queue delete for one media item
 
 - Required scope: `media:write`
 - Rate limit: none beyond the API-key `api` bucket
@@ -1876,15 +1921,17 @@ curl -X DELETE "${API_PUBLIC_URL}/api/media/00000000-0000-4000-8000-000000000000
 
 | Field | Type | Default | Constraints | Description |
 | --- | --- | --- | --- | --- |
-| deleted | true | — | — | Always true. |
-| alreadyGone | boolean | — | — | True when the media was already deleted (deletes are idempotent). |
+| accepted | true | — | — | Delete job was accepted. |
+| jobId | string (uuid) | — | format uuid | Background job ID. |
+| queued | integer | — | min 0; max 9007199254740991 | Items queued (0 when every ID was already gone). |
 
 #### Example response
 
 ```json
 {
-  "deleted": true,
-  "alreadyGone": false
+  "accepted": true,
+  "jobId": "00000000-0000-4000-8000-000000000000",
+  "queued": 0
 }
 ```
 
@@ -2699,7 +2746,7 @@ curl -X GET "${API_PUBLIC_URL}/api/notifications" \
 | Field | Type | Default | Constraints | Description |
 | --- | --- | --- | --- | --- |
 | items[].id | string (uuid) | — | format uuid | Notification ID. |
-| items[].type | upload_succeeded \| upload_failed \| post_published \| post_failed \| post_scheduled \| schedule_failed \| schedule_missed \| post_deleted \| post_delete_failed \| post_edited \| post_edit_failed \| connection_removed \| post_task \| post_warning | — | enum: upload_succeeded, upload_failed, post_published, post_failed, post_scheduled, schedule_failed, schedule_missed, post_deleted, post_delete_failed, post_edited, post_edit_failed, connection_removed, post_task, post_warning | What happened. |
+| items[].type | upload_succeeded \| upload_failed \| media_delete_failed \| post_published \| post_failed \| post_scheduled \| schedule_failed \| schedule_missed \| post_deleted \| post_delete_failed \| post_edited \| post_edit_failed \| connection_removed \| post_task \| post_warning | — | enum: upload_succeeded, upload_failed, media_delete_failed, post_published, post_failed, post_scheduled, schedule_failed, schedule_missed, post_deleted, post_delete_failed, post_edited, post_edit_failed, connection_removed, post_task, post_warning | What happened. |
 | items[].title | string | — | — | Short headline. |
 | items[].body | string | — | — | Longer message. |
 | items[].link | string \| null | — | — | In-app path the notification points to (web UI). |

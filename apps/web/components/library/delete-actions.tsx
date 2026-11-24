@@ -15,6 +15,7 @@ import {
     DropdownMenuTrigger,
 } from '~/components/ui/dropdown-menu'
 import { normalizeTRPCError } from '~/lib/error'
+import { formatMediaInUseError } from '~/lib/media-in-use'
 import { removeFromInfiniteCache, restoreSnapshot, updateCache, type Snapshot } from '~/lib/optimistic'
 import { trpc } from '~/trpc/client'
 
@@ -124,10 +125,10 @@ export function useDeleteMedia(options: { onDeleted?: () => void } = {}) {
         onError: (error, { mediaId }, context) => {
             if (context) restoreSnapshot(queryClient, ...context.snapshots)
             setPending(mediaId, false)
-            toast.error(normalizeTRPCError(error).message)
+            const payload = normalizeTRPCError(error)
+            toast.error(formatMediaInUseError(payload))
         },
-        onSuccess: (_result, _vars, context) => {
-            toast.success(`Deleted “${context?.name ?? 'media'}”`, { duration: 4000 })
+        onSuccess: () => {
             options.onDeleted?.()
         },
         onSettled: (_r, _e, { mediaId }) => {
@@ -162,6 +163,100 @@ export function useDeleteMedia(options: { onDeleted?: () => void } = {}) {
         />
     )
     return { request: (media: Target) => !pending.has(media.id) && setTarget(media), dialog }
+}
+
+/** Confirm + delete several library items (one queued job; one optimistic list sweep). */
+export function useBulkDeleteMedia(options: { onDeleted?: () => void } = {}) {
+    const queryClient = useQueryClient()
+    const utils = trpc.useUtils()
+    const [targets, setTargets] = useState<Target[] | null>(null)
+    const [note, setNote] = useState<string | undefined>()
+
+    const remove = trpc.media.bulkDelete.useMutation({
+        onMutate: async ({ mediaIds }) => {
+            mediaIds.forEach((id) => setPending(id, true))
+            const keys = {
+                library: getQueryKey(trpc.media.list),
+                items: getQueryKey(trpc.folders.items),
+                search: getQueryKey(trpc.search.unified),
+            }
+            await Promise.all(Object.values(keys).map((queryKey) => queryClient.cancelQueries({ queryKey })))
+            await fade()
+            const ids = new Set(mediaIds)
+            const snapshots: Snapshot[] = [
+                removeFromInfiniteCache<WithId>(queryClient, keys.library, (m) => ids.has(m.id)),
+                removeFromInfiniteCache<FolderItem>(queryClient, keys.items, (i) => ids.has(i.mediaId)),
+                updateCache<{ folders: unknown[]; media: WithId[] }>(queryClient, keys.search, (d) => ({
+                    ...d,
+                    media: d.media.filter((m) => !ids.has(m.id)),
+                })),
+            ]
+            return { snapshots, mediaIds }
+        },
+        onError: (error, { mediaIds }, context) => {
+            if (context) restoreSnapshot(queryClient, ...context.snapshots)
+            mediaIds.forEach((id) => setPending(id, false))
+            const payload = normalizeTRPCError(error)
+            toast.error(formatMediaInUseError(payload))
+        },
+        onSuccess: () => {
+            options.onDeleted?.()
+        },
+        onSettled: (_r, _e, { mediaIds }) => {
+            mediaIds.forEach((id) => setPending(id, false))
+            void utils.media.list.invalidate()
+            void utils.folders.items.invalidate()
+            void utils.folders.get.invalidate()
+            void utils.folders.list.invalidate()
+            void utils.search.unified.invalidate()
+        },
+    })
+
+    const count = targets?.length ?? 0
+    const baseDescription =
+        count === 1
+            ? 'This removes the file from your library and storage. Published posts are not affected.'
+            : `This removes ${count} files from your library and storage. Items are removed from any folders. Published posts are not affected.`
+    const description = note ? `${baseDescription} ${note}` : baseDescription
+
+    const dialog = (
+        <ConfirmDialog
+            open={count > 0}
+            onOpenChange={(open) => {
+                if (!open && !remove.isPending) {
+                    setTargets(null)
+                    setNote(undefined)
+                }
+            }}
+            title={count === 1 ? `Delete “${targets?.[0]?.name ?? ''}”?` : `Delete ${count} items?`}
+            description={description}
+            confirmLabel={count === 1 ? 'Delete' : `Delete ${count}`}
+            onConfirm={() => {
+                if (!targets?.length) return
+                const items = targets.filter((t) => !pending.has(t.id))
+                if (!items.length) return
+                remove.mutate(
+                    { mediaIds: items.map((t) => t.id) },
+                    {
+                        onSettled: () => {
+                            setTargets(null)
+                            setNote(undefined)
+                        },
+                    }
+                )
+            }}
+        />
+    )
+
+    const request = (items: Target[], options?: { note?: string }) => {
+        const next = items.filter((t) => !pending.has(t.id))
+        if (next.length) {
+            setNote(options?.note)
+            setTargets(next)
+        }
+    }
+
+    return { request, dialog, running: remove.isPending }
 }
 
 // ---------------------------------------------------------------------------

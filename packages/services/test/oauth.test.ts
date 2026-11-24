@@ -321,7 +321,7 @@ function setup(options: { configured?: Partial<Record<OAuthProviderSlug, boolean
     facebook: cfg("facebook", "public_profile,pages_show_list"),
     threads: cfg("threads", "threads_basic"),
     instagram: {
-      ...cfg("instagram", ""),
+      ...cfg("instagram", "instagram_basic,instagram_content_publish,instagram_manage_insights"),
       configId: "test-config-id",
       redirectUri: "https://api.test/api/oauth/facebook/callback",
     },

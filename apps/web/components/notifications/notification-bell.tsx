@@ -34,6 +34,7 @@ const tone: Record<Notification['type'], { icon: LucideIcon; className: string; 
     post_published: { icon: CircleCheckIcon, className: 'text-success', label: 'Success' },
     post_scheduled: { icon: CircleCheckIcon, className: 'text-success', label: 'Success' },
     upload_failed: { icon: CircleAlertIcon, className: 'text-destructive', label: 'Failed' },
+    media_delete_failed: { icon: CircleAlertIcon, className: 'text-destructive', label: 'Failed' },
     post_failed: { icon: CircleAlertIcon, className: 'text-destructive', label: 'Failed' },
     schedule_failed: { icon: TriangleAlertIcon, className: 'text-warning', label: 'Needs attention' },
     schedule_missed: { icon: TriangleAlertIcon, className: 'text-warning', label: 'Missed' },

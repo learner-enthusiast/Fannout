@@ -27,6 +27,7 @@ function clientConfig(endpoint: string | undefined): S3ClientConfig {
 
 let client: S3Client | undefined;
 let publicClient: S3Client | undefined;
+let uploadClient: S3Client | undefined;
 
 /** Shared client for server-side operations. */
 export function getS3Client(): S3Client {
@@ -41,14 +42,30 @@ export function getPublicS3Client(): S3Client {
   return publicClient;
 }
 
+/**
+ * Client used only to sign browser upload URLs. In development it signs against
+ * the local S3_ENDPOINT (fast, no tunnel round trip); set S3_UPLOAD_ENDPOINT to
+ * override, e.g. when the browser runs on another machine.
+ */
+export function getUploadS3Client(): S3Client {
+  const endpoint =
+    env.S3_UPLOAD_ENDPOINT ?? (env.NODE_ENV === "development" ? env.S3_ENDPOINT : env.S3_PUBLIC_ENDPOINT);
+  if (!endpoint || endpoint === env.S3_ENDPOINT) return getS3Client();
+  if (endpoint === env.S3_PUBLIC_ENDPOINT) return getPublicS3Client();
+  uploadClient ??= new S3Client(clientConfig(endpoint));
+  return uploadClient;
+}
+
 export const defaultBucket = () => env.S3_BUCKET;
 export const defaultRegion = () => env.S3_REGION;
 
 export function closeS3(): void {
   client?.destroy();
   publicClient?.destroy();
+  uploadClient?.destroy();
   client = undefined;
   publicClient = undefined;
+  uploadClient = undefined;
 }
 
 /** HEAD the default bucket. Throws if S3 is unreachable, credentials are wrong or the bucket is missing. */

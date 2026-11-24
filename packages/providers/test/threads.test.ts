@@ -89,6 +89,7 @@ describe("ThreadsProvider", () => {
   test("publishCarousel creates items with is_carousel_item, then the parent", async () => {
     const m = mockFetch(
       json({ id: "1" }),
+      json({ id: "1", status: "FINISHED" }),
       json({ id: "2" }),
       json({ id: "2", status: "FINISHED" }),
       json({ id: "3" }),
@@ -104,7 +105,7 @@ describe("ThreadsProvider", () => {
     });
     assert.deepEqual(res, { containerId: "3", mediaId: "4" });
     assert.equal(m.calls[0]!.form!.get("is_carousel_item"), "true");
-    const parent = m.calls[3]!.form!;
+    const parent = m.calls[4]!.form!;
     assert.equal(parent.get("media_type"), "CAROUSEL");
     assert.equal(parent.get("children"), "1,2");
     assert.equal(parent.get("text"), "album");

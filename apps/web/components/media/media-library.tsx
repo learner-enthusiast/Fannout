@@ -1,6 +1,6 @@
 'use client'
 
-import { FolderPlusIcon, ImagesIcon, SearchIcon, XIcon } from 'lucide-react'
+import { FolderPlusIcon, ImagesIcon, SearchIcon, Trash2Icon, XIcon } from 'lucide-react'
 import Link from 'next/link'
 import { useMemo, useState } from 'react'
 
@@ -8,7 +8,7 @@ import { UploadButton } from '~/components/uploads/upload-dialog'
 
 import type { RouterOutputs } from '@repo/trpc/client'
 import { InfiniteList } from '~/components/infinite-list'
-import { CardMenu, cardMenuSlot, useDeleteMedia, useIsDeleting } from '~/components/library/delete-actions'
+import { CardMenu, cardMenuSlot, useBulkDeleteMedia, useDeleteMedia, useIsDeleting } from '~/components/library/delete-actions'
 import { Button } from '~/components/ui/button'
 import { Checkbox } from '~/components/ui/checkbox'
 import { EmptyState } from '~/components/ui/empty-state'
@@ -151,6 +151,7 @@ export function MediaLibrary() {
     )
     const list = useInfiniteList(mediaQuery)
     const deleteMedia = useDeleteMedia()
+    const bulkDelete = useBulkDeleteMedia({ onDeleted: () => setSelected(new Map()) })
 
     const toggle = (item: Media, checked: boolean) =>
         setSelected((current) => {
@@ -186,19 +187,54 @@ export function MediaLibrary() {
                 </div>
                 <FilterSelect label="Type" value={type} options={TYPE_LABEL} onChange={setType} />
                 <FilterSelect label="Orientation" value={orientation} options={ORIENTATION_LABEL} onChange={setOrientation} />
-                {picked.length > 0 ? (
-                    <div className="ms-auto flex items-center gap-2" role="toolbar" aria-label="Selection">
-                        <span className="text-meta">
-                            <span className="text-mono">{picked.length}</span> selected
-                        </span>
-                        <Button variant="ghost" size="sm" leftIcon={<XIcon aria-hidden />} onClick={() => setSelected(new Map())}>
-                            Clear
+                <div className="ms-auto flex flex-wrap items-center gap-2" role="toolbar" aria-label="Library actions">
+                    {list.items.length > 0 ? (
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            leftIcon={<Trash2Icon aria-hidden />}
+                            disabled={bulkDelete.running}
+                            onClick={() =>
+                                bulkDelete.request(
+                                    list.items.map((item) => ({ id: item.id, name: item.name })),
+                                    list.hasMore
+                                        ? {
+                                              note: 'Only the items already loaded in this view are included—scroll to load more first if you need to delete everything.',
+                                          }
+                                        : undefined
+                                )
+                            }
+                        >
+                            Delete all
                         </Button>
-                        <Button variant="secondary" size="sm" leftIcon={<FolderPlusIcon aria-hidden />} onClick={() => setDialogOpen(true)}>
-                            Add to Folder
+                    ) : null}
+                    {picked.length > 1 ? (
+                        <Button
+                            variant="destructive"
+                            size="sm"
+                            leftIcon={<Trash2Icon aria-hidden />}
+                            disabled={bulkDelete.running}
+                            onClick={() =>
+                                bulkDelete.request(picked.map((item) => ({ id: item.id, name: item.name })))
+                            }
+                        >
+                            Delete <span className="text-mono">{picked.length}</span>
                         </Button>
-                    </div>
-                ) : null}
+                    ) : null}
+                    {picked.length > 0 ? (
+                        <>
+                            <span className="text-meta">
+                                <span className="text-mono">{picked.length}</span> selected
+                            </span>
+                            <Button variant="ghost" size="sm" leftIcon={<XIcon aria-hidden />} onClick={() => setSelected(new Map())}>
+                                Clear
+                            </Button>
+                            <Button variant="secondary" size="sm" leftIcon={<FolderPlusIcon aria-hidden />} onClick={() => setDialogOpen(true)}>
+                                Add to Folder
+                            </Button>
+                        </>
+                    ) : null}
+                </div>
             </div>
 
             <InfiniteList
@@ -234,6 +270,7 @@ export function MediaLibrary() {
                 )}
             />
             {deleteMedia.dialog}
+            {bulkDelete.dialog}
             <AddToFolderDialog
                 media={picked}
                 open={dialogOpen}

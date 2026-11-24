@@ -1,5 +1,6 @@
-import { inngest, mediaUploadCompleted, mediaUploadFailed } from "@repo/inngest";
+import { inngest, mediaDeleteRequested, mediaUploadCompleted, mediaUploadFailed } from "@repo/inngest";
 import {
+  BulkDeleteMediaInputSchema,
   CompleteUploadInputSchema,
   CreateUploadInputSchema,
   CreateUploadResultSchema,
@@ -14,7 +15,7 @@ import {
   SignUploadPartsInputSchema,
   SignUploadPartsResultSchema,
 } from "@repo/services/media/model";
-import { deleteMediaChecked, getMediaDetail, renameMedia } from "@repo/services/media/library";
+import { getMediaDetail, planMediaDeleteJob, renameMedia } from "@repo/services/media/library";
 import {
   completeMediaUpload,
   createMediaUpload,
@@ -25,6 +26,19 @@ import { listMediaPage, toMediaView } from "@repo/services/media/views";
 import { ZipMediaInputSchema, ZipMediaResultSchema, zipMedia } from "@repo/services/media/zip";
 import { z } from "zod";
 import { router, scoped } from "../../trpc";
+
+async function queueMediaDelete(userId: string, input: z.input<typeof BulkDeleteMediaInputSchema>) {
+  const { mediaIdsToQueue, ...result } = await planMediaDeleteJob(userId, input);
+  if (mediaIdsToQueue.length > 0) {
+    await inngest.send(
+      mediaDeleteRequested.create(
+        { userId, jobId: result.jobId, mediaIds: mediaIdsToQueue },
+        { id: `media-delete:${result.jobId}` },
+      ),
+    );
+  }
+  return result;
+}
 
 export const mediaRouter = router({
   /** Images of a manual post, zipped in slide order (read from storage on the server). */
@@ -92,10 +106,17 @@ export const mediaRouter = router({
     .output(MediaViewSchema)
     .mutation(({ ctx, input }) => renameMedia(ctx.dbUserId, input)),
 
-  /** Deletes media + file. If folders use it, returns inUse (folder names) unless force=true. */
+  /** Queues a background delete (Inngest). Media still used by unpublished posts is rejected with MEDIA_IN_USE. */
   delete: scoped("media:write")
-    .meta({ openapi: { method: "DELETE", path: "/media/{mediaId}", summary: "Delete a media item (idempotent)", protect: true } })
+    .meta({ openapi: { method: "DELETE", path: "/media/{mediaId}", summary: "Queue delete for one media item", protect: true } })
     .input(DeleteMediaInputSchema)
     .output(DeleteMediaResultSchema)
-    .mutation(({ ctx, input }) => deleteMediaChecked(ctx.dbUserId, input)),
+    .mutation(({ ctx, input }) => queueMediaDelete(ctx.dbUserId, { mediaIds: [input.mediaId] })),
+
+  /** Queues one background job for many items (one failure notification for the batch). */
+  bulkDelete: scoped("media:write")
+    .meta({ openapi: { method: "POST", path: "/media/bulk-delete", summary: "Queue delete for many media items in one job", protect: true } })
+    .input(BulkDeleteMediaInputSchema)
+    .output(DeleteMediaResultSchema)
+    .mutation(({ ctx, input }) => queueMediaDelete(ctx.dbUserId, input)),
 });

@@ -1,7 +1,7 @@
 import * as oauth from "oauth4webapi";
 import { z } from "zod";
 import { INSTAGRAM_API_VERSION, INSTAGRAM_SCOPES } from "@repo/providers/instagram";
-import { providerGetJson, requireCredentials } from "./shared";
+import { providerGetJson, requireCredentials, splitScopes } from "./shared";
 import type { HttpOptions, OAuthProviderAdapter, ProviderCredentials } from "./types";
 
 /**
@@ -18,7 +18,6 @@ import type { HttpOptions, OAuthProviderAdapter, ProviderCredentials } from "./t
  */
 const GRAPH = "https://graph.facebook.com";
 const MAX_ACCOUNT_PAGES = 50;
-const EXPECTED_SCOPES = [INSTAGRAM_SCOPES.basic, INSTAGRAM_SCOPES.contentPublish, INSTAGRAM_SCOPES.manageInsights];
 
 const DebugTokenSchema = z.object({
   data: z.object({ scopes: z.array(z.string()).optional(), expires_at: z.number().optional(), is_valid: z.boolean().optional() }),
@@ -49,6 +48,7 @@ export function createInstagramProvider(credentials: ProviderCredentials): OAuth
   const version = credentials.apiVersion ?? INSTAGRAM_API_VERSION;
   const as = instagramAuthorizationServer(version);
   const configId = credentials.configId ?? "";
+  const configuredScopes = splitScopes(credentials.scopes);
   const bearer = (token: string) => ({ authorization: `Bearer ${token}` });
   const graph = (path: string, params: Record<string, string> = {}) => {
     const url = new URL(`${GRAPH}/${version}${path}`);
@@ -73,7 +73,7 @@ export function createInstagramProvider(credentials: ProviderCredentials): OAuth
     slug: "instagram",
     provider: "INSTAGRAM",
     redirectUri: credentials.redirectUri,
-    scopes: EXPECTED_SCOPES,
+    scopes: configuredScopes,
     requiredScopes: [INSTAGRAM_SCOPES.basic, INSTAGRAM_SCOPES.contentPublish],
     usePkce: false,
     useNonce: false,
@@ -102,7 +102,7 @@ export function createInstagramProvider(credentials: ProviderCredentials): OAuth
 
     async getGrantedScopes(accessToken, http) {
       const debug = await debugToken(accessToken, http);
-      return debug?.scopes?.length ? debug.scopes : EXPECTED_SCOPES;
+      return debug?.scopes?.length ? debug.scopes : configuredScopes;
     },
 
     async resolveAccounts({ accessToken, http }) {

@@ -6,8 +6,10 @@ import {
   batchProgress,
   claimPost,
   classifyPublishError,
+  findStalePublishingPosts,
   markPostFailed,
   markPostMediaMissed,
+  STALE_PUBLISHING_MS,
   PermanentPublishError,
   postMediaIssues,
   postMediaState,
@@ -367,4 +369,25 @@ export const namePostBatch = inngest.createFunction(
     retries: 2,
   },
   async ({ event, step }) => step.run("name", () => nameBatchWithAi(event.data.batchId)),
+);
+
+const STALE_PUBLISHING_MESSAGE =
+  "Publishing stopped before finishing (for example after a deploy or worker restart). Retry from the batch page, or cancel the post.";
+
+/** Every 30 min: `publishing` longer than 24 h → failed so media can be deleted. */
+export const cleanupStalePublishing = inngest.createFunction(
+  { id: "cleanup-stale-publishing", triggers: [{ cron: "*/30 * * * *" }], retries: 3 },
+  async ({ step }) => {
+    const stale = await step.run("find-stale", () =>
+      findStalePublishingPosts(new Date(Date.now() - STALE_PUBLISHING_MS)),
+    );
+    let failed = 0;
+    for (const post of stale) {
+      await step.run(`fail-${post.id}`, () =>
+        markPostFailed(post.id, "publish_stalled", STALE_PUBLISHING_MESSAGE),
+      );
+      failed += 1;
+    }
+    return { checked: stale.length, failed };
+  },
 );

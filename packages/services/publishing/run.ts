@@ -207,6 +207,16 @@ export async function markPostFailed(postId: string, code: string, message: stri
   await failSchedule(postId, message);
 }
 
+/** Posts left in `publishing` after a run died (blocks media delete until terminal). */
+export const STALE_PUBLISHING_MS = 24 * 60 * 60 * 1000;
+
+export async function findStalePublishingPosts(before: Date) {
+  return db
+    .select({ id: posts.id, userId: posts.userId, name: posts.name })
+    .from(posts)
+    .where(and(eq(posts.status, "publishing"), sql`${posts.updatedAt} < ${before}`));
+}
+
 /** Status-page step only (e.g. while sleeping until the scheduled time). */
 export async function setPostStep(postId: string, step: string) {
   await saveConfigProgress(postId, {}, step);

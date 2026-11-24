@@ -4,6 +4,7 @@ import { PaginationInputSchema, paginatedOutput } from "../common/pagination";
 export const NotificationTypeSchema = z.enum([
   "upload_succeeded",
   "upload_failed",
+  "media_delete_failed",
   "post_published",
   "post_failed",
   "post_scheduled",

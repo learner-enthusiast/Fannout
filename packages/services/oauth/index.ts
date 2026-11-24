@@ -85,7 +85,7 @@ export const providers = createProviderRegistry({
     clientId: env.FACEBOOK_CLIENT_ID,
     clientSecret: env.FACEBOOK_CLIENT_SECRET,
     redirectUri: env.FACEBOOK_REDIRECT_URI,
-    scopes: "",
+    scopes: env.INSTAGRAM_SCOPES,
     apiVersion: env.INSTAGRAM_GRAPH_VERSION,
     configId: env.INSTAGRAM_CONFIG_ID,
   },

@@ -92,6 +92,12 @@ const envSchema = z.object({
    * Facebook Login for Business configuration id. Permissions come from that configuration (no scope param).
    */
   INSTAGRAM_CONFIG_ID: optional,
+  /** Unified Login never sends `scope`; used for post-login checks and /debug_token fallbacks. Match Meta Login for Business config. */
+  INSTAGRAM_SCOPES: z
+    .string()
+    .default(
+      "instagram_basic,instagram_content_publish,instagram_manage_insights",
+    ),
   INSTAGRAM_GRAPH_VERSION: z
     .string()
     .regex(/^v\d+\.\d+$/)

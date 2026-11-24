@@ -13,6 +13,15 @@ export const mediaUploadCompleted = eventType("media/upload.completed", {
   schema: z.object({ mediaId: z.uuid(), userId: z.uuid() }),
 });
 
+/** One Inngest run per job — single or bulk library delete. */
+export const mediaDeleteRequested = eventType("media/delete.requested", {
+  schema: z.object({
+    userId: z.uuid(),
+    jobId: z.uuid(),
+    mediaIds: z.array(z.uuid()).min(1).max(100),
+  }),
+});
+
 export const mediaUploadFailed = eventType("media/upload.failed", {
   schema: z.object({ mediaId: z.uuid(), userId: z.uuid(), error: z.string() }),
 });

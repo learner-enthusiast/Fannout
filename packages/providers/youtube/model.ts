@@ -102,9 +102,10 @@ export const YouTubeComposeInputSchema = z.object({
     ],
   }),
   madeForKids: composeField(z.boolean({ error: "Say whether the video is made for kids" }), {
-    mediaType: "video", label: "Audience", description: "Required: whether the video is made for kids (COPPA). There is no default.",
+    mediaType: "video", label: "Audience", description: "Required: whether the video is made for kids (COPPA). Default false (not made for kids).",
     kind: "radio",
-    helper: "Required by YouTube (COPPA). There is no default.",
+    defaultValue: false,
+    helper: "Required by YouTube (COPPA). Defaults to not made for kids.",
     options: [
       { value: true, label: "Yes, it's made for kids" },
       { value: false, label: "No, it's not made for kids" },

@@ -63,7 +63,11 @@ async function ensureContainer(provider: ThreadsProvider, ctx: PublishContext): 
       containerId = (await provider.createContainer({ ...common, media_type: "IMAGE", image_url: urls[0]!.url })).id;
     } else {
       const children: string[] = [];
-      for (const u of urls) children.push((await provider.createCarouselItem({ media_type: "IMAGE", image_url: u.url })).id);
+      for (const u of urls) {
+        children.push((await provider.createCarouselItem({ media_type: "IMAGE", image_url: u.url })).id);
+      }
+      await ctx.save({}, "Threads is processing carousel slides");
+      await Promise.all(children.map((id) => provider.waitForContainer(id)));
       containerId = (await provider.createContainer({ ...common, media_type: "CAROUSEL", children })).id;
     }
     await ctx.save({ containerId, containerCreatedAt: new Date().toISOString(), containerReady: false });

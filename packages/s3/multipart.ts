@@ -5,7 +5,7 @@ import {
   UploadPartCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { defaultBucket, getPublicS3Client, getS3Client } from "./client";
+import { defaultBucket, getS3Client, getUploadS3Client } from "./client";
 import { assertSafeKey } from "./keys";
 
 /** S3 limits: parts 5 MiB..5 GiB (last part may be smaller), at most 10,000 parts. */
@@ -45,7 +45,7 @@ export async function getUploadPartUrls(
 ): Promise<{ partNumber: number; url: string }[]> {
   const bucket = options.bucket ?? defaultBucket();
   const safeKey = assertSafeKey(key);
-  const client = getPublicS3Client();
+  const client = getUploadS3Client();
   return Promise.all(
     Array.from({ length: count }, async (_, index) => {
       const partNumber = index + 1;
@@ -73,7 +73,7 @@ export async function signUploadParts(
 ): Promise<{ partNumber: number; url: string }[]> {
   const bucket = options.bucket ?? defaultBucket();
   const safeKey = assertSafeKey(key);
-  const client = getPublicS3Client();
+  const client = getUploadS3Client();
   return Promise.all(
     partNumbers.map(async (partNumber) => ({
       partNumber,

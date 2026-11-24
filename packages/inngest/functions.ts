@@ -1,7 +1,7 @@
 import type { InngestFunction } from "inngest";
-import { cleanupStaleUploads, onUploadFailed, processMedia } from "./functions/media";
+import { cleanupStaleUploads, deleteMediaJob, onUploadFailed, processMedia } from "./functions/media";
 import { createNotificationFn, pruneNotifications } from "./functions/notifications";
-import { namePostBatch, publishBatch, publishPost } from "./functions/publishing";
+import { cleanupStalePublishing, namePostBatch, publishBatch, publishPost } from "./functions/publishing";
 import { generateContent } from "./functions/ai-content";
 import { deletePost, editPost } from "./functions/post-actions";
 import { metaDataDeletion } from "./functions/meta";
@@ -15,11 +15,13 @@ import { analyticsAccountCron, analyticsAccountSync, analyticsPostCron, analytic
 export const functions: InngestFunction.Any[] = [
   processMedia,
   onUploadFailed,
+  deleteMediaJob,
   cleanupStaleUploads,
   createNotificationFn,
   pruneNotifications,
   publishBatch,
   publishPost,
+  cleanupStalePublishing,
   namePostBatch,
   generateContent,
   deletePost,

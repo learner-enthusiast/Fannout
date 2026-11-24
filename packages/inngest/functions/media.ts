@@ -19,7 +19,8 @@ import {
 import { NonRetriableError } from "inngest";
 import { z } from "zod";
 import { inngest } from "../client";
-import { mediaFailed, mediaReady, mediaUploadCompleted, mediaUploadFailed, notificationCreate } from "../events";
+import { runMediaDeleteJob } from "@repo/services/media/library";
+import { mediaDeleteRequested, mediaFailed, mediaReady, mediaUploadCompleted, mediaUploadFailed, notificationCreate } from "../events";
 
 const label = (name: string | null | undefined) => name || "Your file";
 
@@ -258,6 +259,67 @@ export const onUploadFailed = inngest.createFunction(
 );
 
 const STALE_AFTER_MS = 24 * 60 * 60 * 1000;
+
+/** Library delete (single or bulk): one notification only when something failed. */
+export const deleteMediaJob = inngest.createFunction(
+  {
+    id: "delete-media",
+    triggers: [mediaDeleteRequested],
+    concurrency: { limit: 2, key: "event.data.userId" },
+    retries: 2,
+    onFailure: async ({ event, error, step }) => {
+      const original = z
+        .object({ userId: z.uuid(), jobId: z.uuid(), mediaIds: z.array(z.uuid()) })
+        .safeParse(event.data.event.data);
+      if (!original.success) return;
+      const { userId, jobId, mediaIds } = original.data;
+      const message = error.message || "Delete failed";
+      await step.sendEvent(
+        "notify-delete-failed",
+        notificationCreate.create(
+          {
+            userId,
+            type: "media_delete_failed",
+            title: mediaIds.length === 1 ? "Couldn't delete media" : "Couldn't delete media",
+            body: message.slice(0, 2000),
+            link: "/media",
+            data: { jobId, mediaIds, error: message },
+          },
+          { id: `media-delete-failed:${jobId}` },
+        ),
+      );
+    },
+  },
+  async ({ event, step }) => {
+    const { userId, jobId, mediaIds } = event.data;
+    const result = await step.run("delete-items", () => runMediaDeleteJob(userId, mediaIds));
+    if (result.failures.length === 0) return result;
+
+    const failed = result.failures.length;
+    const body =
+      failed === result.total
+        ? failed === 1
+          ? result.failures[0]!.message
+          : `${failed} items could not be deleted. Refresh the library to see what's left.`
+        : `${failed} of ${result.total} items could not be deleted. Refresh the library to see what's left.`;
+
+    await step.sendEvent(
+      "notify-delete-failed",
+      notificationCreate.create(
+        {
+          userId,
+          type: "media_delete_failed",
+          title: failed === 1 ? "Couldn't delete media" : `Couldn't delete ${failed} items`,
+          body,
+          link: "/media",
+          data: { jobId, ...result },
+        },
+        { id: `media-delete-failed:${jobId}` },
+      ),
+    );
+    return result;
+  },
+);
 
 /** Every 30 min: uploads stuck in "uploading" for 24 h → abort, fail, notify. */
 export const cleanupStaleUploads = inngest.createFunction(

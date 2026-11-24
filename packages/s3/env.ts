@@ -14,6 +14,12 @@ const envSchema = z.object({
    * server uses (e.g. server → http://minio:9000, browser → http://localhost:9000).
    */
   S3_PUBLIC_ENDPOINT: optional.pipe(z.url().optional()),
+  /**
+   * Endpoint browsers upload to (presigned PUTs). Defaults to S3_ENDPOINT in
+   * development, so uploads go straight to local MinIO instead of through the
+   * public tunnel; defaults to S3_PUBLIC_ENDPOINT otherwise.
+   */
+  S3_UPLOAD_ENDPOINT: optional.pipe(z.url().optional()),
   S3_REGION: z.string().default("us-east-1"),
   S3_BUCKET: z.string().min(3).default("fannout-media"),
   /** Optional on AWS (falls back to the default credential chain, e.g. IAM roles). */

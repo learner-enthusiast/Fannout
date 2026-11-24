@@ -314,9 +314,15 @@ export const RenameMediaInputSchema = z.object({
 });
 
 export const DeleteMediaInputSchema = z.object({ mediaId: z.uuid().describe("Media ID.") });
+
+export const BulkDeleteMediaInputSchema = z.object({
+  mediaIds: z.array(z.uuid()).min(1).max(100).describe("Media IDs to delete in one background job."),
+});
+
+/** Delete is queued to Inngest; storage removal runs in the worker. */
 export const DeleteMediaResultSchema = z.object({
-  deleted: z.literal(true).describe("Always true."),
-  /** True when it was already gone (deletes are idempotent). */
-  alreadyGone: z.boolean().describe("True when the media was already deleted (deletes are idempotent)."),
+  accepted: z.literal(true).describe("Delete job was accepted."),
+  jobId: z.uuid().describe("Background job ID."),
+  queued: z.number().int().nonnegative().describe("Items queued (0 when every ID was already gone)."),
 });
 export type DeleteMediaResult = z.infer<typeof DeleteMediaResultSchema>;

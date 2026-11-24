@@ -5,6 +5,7 @@ export {
   defaultRegion,
   getPublicS3Client,
   getS3Client,
+  getUploadS3Client,
 } from "./client";
 export { assertSafeKey, buildObjectKey } from "./keys";
 export {
